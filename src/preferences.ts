@@ -2,12 +2,13 @@ import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import path from "node:path";
+import { isEffort, type Effort } from "./models.js";
 
-export type Effort = "low" | "medium" | "high";
+export type { Effort } from "./models.js";
 
 /** The model and tier the user chose once for this machine. */
 export interface ModelPreference {
-  /** A display name agy accepts, e.g. "Gemini 3.8 Flash (High)". */
+  /** A canonical agy model ID. Legacy display-name choices remain readable. */
   model: string;
   effort?: Effort;
   /** ISO timestamp of when it was chosen. */
@@ -22,10 +23,6 @@ export interface PreferenceStore {
 /** `$XDG_CONFIG_HOME/claude-agy-mcp`, or `~/.config/claude-agy-mcp`. */
 export function configDir(env: Record<string, string | undefined> = process.env): string {
   return path.join(env.XDG_CONFIG_HOME || path.join(homedir(), ".config"), "claude-agy-mcp");
-}
-
-function isEffort(v: unknown): v is Effort {
-  return v === "low" || v === "medium" || v === "high";
 }
 
 /**

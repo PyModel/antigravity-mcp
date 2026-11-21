@@ -6,3 +6,5 @@ package/
 .agents/
 docs/*
 !docs/multi-client-support.md
+!docs/research/
+!docs/audits/

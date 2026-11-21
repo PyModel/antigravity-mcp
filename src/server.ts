@@ -6,12 +6,18 @@ import { probeConfinement, unavailableConfinement, type Confinement } from "./co
 import { loadConfig, timeoutFor, type Config } from "./config.js";
 import { FileCooldownStore } from "./cooldown-store.js";
 import { FilePreferenceStore } from "./preferences.js";
-import { Delegator, ModelNotChosenError, treeMovedWarning, type Delegation } from "./delegation.js";
-import { redact } from "./egress.js";
-import { InvalidRequestError } from "./failure.js";
-import { removeLogDir, sweepStaleLogs } from "./runner.js";
-import { ModelRegistry, listModels } from "./models.js";
-import { CooldownRegistry } from "./quota.js";
+import {
+  Delegator,
+  ModelNotChosenError,
+  NotRepeatedError,
+  treeMovedWarning,
+  type Delegation,
+} from "./delegation.js";
+import { redact, redactDeep } from "./egress.js";
+import { AgyFailure, InvalidRequestError } from "./failure.js";
+import { removeLogDir, sweepStaleLogs, truncate } from "./runner.js";
+import { EFFORTS, ModelRegistry, listModels } from "./models.js";
+import { CooldownRegistry, QuotaError } from "./quota.js";
 import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type {
   ElicitRequestFormParams,
@@ -24,7 +30,7 @@ import { ROUTING_ARGS, TOOLS, type ToolDef } from "./tools.js";
 
 const SET_MODEL_ARGS = z.object({
   model: z.string().min(1).optional(),
-  effort: z.enum(["low", "medium", "high"]).optional(),
+  effort: z.enum(EFFORTS).optional(),
 });
 
 /**
@@ -90,7 +96,10 @@ export function renderDelegation(d: Delegation, timeoutSec: number, nonce: strin
   if (d.note) meta.push(`note: ${d.note}`);
   if (d.attempts.length) meta.push(`failover: ${d.attempts.join("; ")}`);
   if (d.sessionId) meta.push(`session: ${d.sessionId} (use follow_up to continue)`);
+  if (d.finishedReason) meta.push(`finished reason: ${d.finishedReason}`);
   if (d.usage.totalTokens) meta.push(`tokens: ${d.usage.totalTokens}`);
+  if (d.usageKnown === false)
+    meta.push("complete usage unavailable; reported tokens are a lower bound");
   if (d.redactions) meta.push(`redacted ${d.redactions} credential-shaped string(s)`);
   if (d.truncatedFrom) meta.push(`truncated from ${d.truncatedFrom} chars`);
 
@@ -137,6 +146,15 @@ function structuredOf(d: Delegation): Record<string, unknown> | undefined {
     ...(d.continuation ? { resumed: d.continuation.resumed } : {}),
     denied_actions: d.deniedActions,
     tokens: d.usage.totalTokens,
+    usage_known: d.usageKnown !== false,
+    timed_out: d.timedOut,
+    ...(d.finishedReason ? { finished_reason: d.finishedReason } : {}),
+    ...(d.readOnly ? { read_only: d.readOnly } : {}),
+    ...(d.wroteInReadOnlyMode !== undefined
+      ? { wrote_in_read_only_mode: d.wroteInReadOnlyMode }
+      : {}),
+    ...(d.truncatedFrom !== undefined ? { truncated_from: d.truncatedFrom } : {}),
+    redactions: d.redactions,
   };
 }
 
@@ -144,21 +162,25 @@ function progressReporter(extra: HandlerExtra | undefined, scrub: boolean) {
   const token = extra?._meta?.progressToken;
   if (token === undefined || !extra?.sendNotification) return undefined;
   let last = 0;
+  let sequence = 0;
   return (p: { text: string; stepIndex: number; stepType: string }) => {
     // One notification per second is enough to keep a client from idling out.
     const now = Date.now();
     if (now - last < 1000) return;
     last = now;
+    const message = `agy ${p.stepType}: ${p.text}`;
     // A client that has gone away rejects this; that must not take the server down.
     extra
       .sendNotification?.({
         method: "notifications/progress",
         params: {
           progressToken: token,
-          progress: p.stepIndex,
+          // Provider step indices restart on another leg and warm updates use
+          // zero. MCP progress must increase for the whole request token.
+          progress: ++sequence,
           // Redact before slicing: this is live model output, and it reached the
           // client unscrubbed even with AGY_REDACT on.
-          message: `agy ${p.stepType}: ${(scrub ? redact(p.text).text : p.text).slice(-160)}`,
+          message: (scrub ? redact(message).text : message).slice(-200),
         },
       })
       .catch(() => {});
@@ -167,8 +189,9 @@ function progressReporter(extra: HandlerExtra | undefined, scrub: boolean) {
 
 function renderStatus(
   status: ReturnType<Delegator["status"]>,
-  available: { name: string }[] | null,
+  available: { id: string; name: string }[] | null,
   nonce: string,
+  effective: Awaited<ReturnType<Delegator["effectiveRoutes"]>> = [],
 ): string {
   const lines: string[] = [
     `agy ${status.agyVersion}`,
@@ -185,8 +208,8 @@ function renderStatus(
     `runs: ${status.inFlight} in flight, ${status.queued} queued`,
     `delegation depth: ${status.depth}`,
     status.budget !== undefined
-      ? `tokens: ${status.spent} of ${status.budget} budget`
-      : `tokens: ${status.spent} (no budget set)`,
+      ? `reported tokens: ${status.spent} of ${status.budget} admission budget (in-flight/unknown usage may exceed it)`
+      : `reported tokens: ${status.spent} (no budget set)`,
     `warm sessions: ${status.warm.resident} resident`,
     `read-only runs: ${
       status.readOnly.enforced
@@ -199,38 +222,51 @@ function renderStatus(
   if (status.usage.length) {
     lines.push("", "usage by model:");
     for (const row of status.usage) {
-      lines.push(`  ${row.model}: ${row.runs} run(s), ${row.totalTokens} tokens`);
+      lines.push(
+        `  ${row.model}: ${row.runs} run(s), ${row.totalTokens} reported tokens${row.unknownRuns ? `, ${row.unknownRuns} run(s) with incomplete usage` : ""}`,
+      );
     }
   }
   lines.push("", status.cooldowns.length ? "quota cooldowns:" : "quota cooldowns: none");
   for (const c of status.cooldowns) lines.push(`  ${c.model}: ${c.secondsLeft}s left`);
-  lines.push("", "tool chains:");
+  lines.push("", "configured tool chains (selectors, not observed model use):");
   for (const tool of TOOLS) {
     if (tool.chain) lines.push(`  ${tool.name}: ${tool.chain.join(" -> ")}`);
   }
+  lines.push("", "effective single-call routes (listed IDs, subject to cooldown):");
+  for (const row of effective) lines.push(`  ${row.tool}: ${row.error ?? row.models.join(" -> ")}`);
+  lines.push("default council policy (separate paid legs): " + COUNCIL.join(", "));
   lines.push("", available ? "models agy offers:" : "models agy offers: could not be listed");
-  for (const m of available ?? []) lines.push(`  ${m.name}`);
+  for (const m of available ?? []) lines.push(`  ${m.id} — ${m.name}`);
   return `[claude-agy-mcp ${nonce}] status\n${lines.join("\n")}`;
 }
 
 /** Same members and order as `delegate_many`'s chain: one model per family, Flash first. */
 const COUNCIL = ["gemini-flash@latest-high", "gemini-pro@latest-high", "claude-opus@latest"];
 
+/** Failure payloads obey the same scrub-before-cap order as successful answers. */
+function failureText(text: string, cfg: Config): { text: string; from?: number } {
+  return truncate(cfg.redact ? redact(text).text : text, cfg.maxOutputChars);
+}
+
 function fanoutLegs(
   args: Record<string, unknown>,
-): { model?: string; prompt?: string; label: string }[] {
+): { model?: string; prompt?: string; label: string; automatic?: boolean }[] {
   const tasks = Array.isArray(args.tasks) ? (args.tasks as string[]) : [];
   const models = Array.isArray(args.models) ? (args.models as string[]) : [];
   if (tasks.length) {
     return tasks.map((prompt, i) => ({ prompt, label: `task ${i + 1}` }));
   }
-  return (models.length ? models : COUNCIL).map((model) => ({ model, label: model }));
+  if (models.length) return models.map((model) => ({ model, label: model }));
+  if (typeof args.model === "string") return [{ model: args.model, label: args.model }];
+  return COUNCIL.map((model) => ({ model, label: model, automatic: true }));
 }
 
 function renderFanout(
   results: { label: string; delegation?: Delegation; error?: string }[],
   timeoutSec: number,
   nonce: string,
+  cfg: Config,
 ): string {
   // SEC-M8. The leg heading has to carry the nonce like every other trusted
   // line. A bare "### <model>" is forgeable from inside a leg's own payload, so
@@ -239,7 +275,7 @@ function renderFanout(
   const parts = results.map((r) =>
     r.delegation
       ? `[claude-agy-mcp ${nonce}] leg: ${r.label}\n${renderDelegation(r.delegation, timeoutSec, nonce)}`
-      : `[claude-agy-mcp ${nonce}] leg: ${r.label}\n[claude-agy-mcp ${nonce}] failed: ${r.error}`,
+      : `[claude-agy-mcp ${nonce}] leg: ${r.label}\n[claude-agy-mcp ${nonce}] failed: ${failureText(r.error ?? "Unknown failure", cfg).text}`,
   );
   const answered = results.filter((r) => r.delegation).length;
   return (
@@ -251,8 +287,6 @@ function renderFanout(
 
 /** Puts a form in front of the user; undefined when the client cannot show one. */
 export type Elicit = (params: ElicitRequestFormParams) => Promise<ElicitResult>;
-
-const EFFORTS = ["low", "medium", "high"] as const;
 
 /**
  * Asks the user for the model and tier through the client's own UI, records the
@@ -267,30 +301,25 @@ async function askUserForModel(delegator: Delegator, elicit: Elicit): Promise<st
     delegator.defaultChoice(),
     delegator.availableModels(),
   ]);
-  const names = available?.map((m) => m.name) ?? (suggested ? [suggested.model] : []);
-  if (names.length === 0) return null;
-  const defaultModel = suggested?.model ?? names[0]!;
-  const defaultEffort = suggested?.effort ?? "high";
+  const choices = available?.map((m) => ({ const: m.id, title: m.name })) ?? [];
+  if (choices.length === 0)
+    return "Cannot choose a model until agy models can be read. Nothing was dispatched.";
+  const defaultModel = suggested?.model;
   const result = await elicit({
     mode: "form",
     message:
-      `Proceed with the default — ${defaultModel} at ${defaultEffort} effort — or change the ` +
-      "model or effort? This is asked once and saved for this machine.",
+      (defaultModel
+        ? `Proceed with the default — ${defaultModel} — or choose a listed variant? `
+        : "Choose a listed model variant. ") +
+      "The model ID includes its tier. This choice is saved for this machine.",
     requestedSchema: {
       type: "object",
       properties: {
         model: {
           type: "string",
           title: "Model",
-          oneOf: names.map((n) => ({ const: n, title: n })),
-          default: defaultModel,
-        },
-        effort: {
-          type: "string",
-          title: "Effort",
-          description: "Gemini models switch to the sibling at this tier.",
-          oneOf: EFFORTS.map((e) => ({ const: e, title: e })),
-          default: defaultEffort,
+          oneOf: choices,
+          ...(defaultModel ? { default: defaultModel } : {}),
         },
       },
       required: ["model"],
@@ -305,8 +334,9 @@ async function askUserForModel(delegator: Delegator, elicit: Elicit): Promise<st
   }
   const content = (result.content ?? {}) as Record<string, unknown>;
   const model = typeof content.model === "string" && content.model ? content.model : defaultModel;
-  const effort = EFFORTS.find((e) => e === content.effort);
-  await delegator.setPreference(model, effort);
+  if (!model) return "No model was selected; nothing was dispatched.";
+  // Accepting the proposed default uses the same setter as a bare set_model.
+  await delegator.setPreference(model === defaultModel ? undefined : model, undefined);
   return null;
 }
 
@@ -337,7 +367,10 @@ export function createToolHandler(
     ],
     isError: true,
   });
-  return async (args, extra) => {
+  const handle = async (
+    args: Record<string, unknown>,
+    extra?: HandlerExtra,
+  ): Promise<ToolResponse> => {
     const nonce = makeNonce();
     const gated = async <T>(delegate: () => Promise<T>): Promise<T> => {
       try {
@@ -354,7 +387,17 @@ export function createToolHandler(
       if (tool.kind === "status") {
         const available = await delegator.availableModels();
         return {
-          content: [{ type: "text", text: renderStatus(delegator.status(), available, nonce) }],
+          content: [
+            {
+              type: "text",
+              text: renderStatus(
+                delegator.status(),
+                available,
+                nonce,
+                await delegator.effectiveRoutes(),
+              ),
+            },
+          ],
         };
       }
       if (tool.kind === "configure") {
@@ -393,11 +436,13 @@ export function createToolHandler(
       };
 
       if (tool.kind === "fanout") {
+        // Also validate direct handler calls before any leg is prepared.
+        tool.schema.parse(args);
         const modelsChosen = Array.isArray(args.models) && args.models.length > 0;
         const results = await gated(() =>
           delegator.runMany(base, fanoutLegs(args), { modelsChosen }),
         );
-        const text = renderFanout(results, timeoutSec, nonce);
+        const text = renderFanout(results, timeoutSec, nonce, cfg);
         // A leg that timed out answered with a fragment; if that is all there
         // is, the fan-out failed, just as a single timed-out delegation does.
         if (results.every((r) => r.error || r.delegation?.timedOut)) return failed(text);
@@ -414,10 +459,44 @@ export function createToolHandler(
     } catch (err) {
       // Error text is a return path like any other: AgyFailure carries agy's
       // stderr and the envelope's error string through verbatim.
-      const msg = (err as Error).message;
+      const msg = failureText((err as Error).message, cfg).text;
       const invalid = err instanceof InvalidRequestError || err instanceof z.ZodError;
-      return failed(cfg.redact ? redact(msg).text : msg, !invalid);
+      const cause = err instanceof NotRepeatedError ? err.cause : err;
+      if (
+        (cause instanceof AgyFailure || cause instanceof QuotaError) &&
+        (cause.partialOutput || cause.conversationId)
+      ) {
+        const partial = failureText(cause.partialOutput ?? "", cfg);
+        return {
+          ...failed(
+            `${msg}\n[claude-agy-mcp ${nonce}] incomplete response${cause.conversationId ? ` | session: ${cause.conversationId}` : ""}` +
+              `${cause.finishedReason ? ` | finished reason: ${cause.finishedReason}` : ""}\n` +
+              `${partial.from !== undefined ? `[claude-agy-mcp ${nonce}] partial output truncated from ${partial.from} chars\n` : ""}` +
+              `[claude-agy-mcp ${nonce}] --- untrusted partial output begins ---\n${partial.text}\n` +
+              `[claude-agy-mcp ${nonce}] --- untrusted partial output ends ---`,
+            !invalid,
+          ),
+          structuredContent: {
+            complete: false,
+            ...(cause.conversationId ? { session_id: cause.conversationId } : {}),
+            ...(cause.finishedReason ? { finished_reason: cause.finishedReason } : {}),
+            ...(partial.from !== undefined ? { partial_truncated_from: partial.from } : {}),
+            ...(cause.structuredOutput !== undefined
+              ? { partial_result: cause.structuredOutput }
+              : {}),
+            ...(cause.usage ? { reported_usage: cause.usage } : {}),
+            usage_known: cause.usageKnown !== false,
+          },
+        };
+      }
+      return failed(msg, !invalid);
     }
+  };
+  // One final egress boundary covers success metadata, denied actions, status,
+  // single errors, partial council errors, and all structured results alike.
+  return async (args, extra) => {
+    const response = await handle(args, extra);
+    return cfg.redact ? (redactDeep(response).value as ToolResponse) : response;
   };
 }
 

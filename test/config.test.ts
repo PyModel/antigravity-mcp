@@ -2,6 +2,10 @@ import { describe, it, expect } from "vitest";
 import { ConfigError, loadConfig, parseRoots, timeoutFor } from "../src/config.js";
 
 describe("loadConfig", () => {
+  it("accepts the shared effort vocabulary without claiming a model supports every tier", () => {
+    expect(loadConfig({ AGY_EFFORT: "xhigh" }).defaultEffort).toBe("xhigh");
+    expect(loadConfig({ AGY_EFFORT: "max" }).defaultEffort).toBe("max");
+  });
   it("returns defaults for empty env", () => {
     const c = loadConfig({});
     expect(c).toEqual({

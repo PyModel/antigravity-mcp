@@ -1,0 +1,40 @@
+{
+  "taskFanout": {
+    "spawns": 0,
+    "isError": true,
+    "hasExclusiveShapeError": true
+  },
+  "fanoutErrorRedaction": {
+    "spawns": 2,
+    "isError": true,
+    "syntheticCredentialLeaked": true
+  },
+  "fallbackMetadataRedaction": {
+    "spawns": 2,
+    "syntheticCredentialLeaked": true
+  },
+  "denialMetadataRedaction": {
+    "spawns": 1,
+    "textLeaked": true,
+    "structuredLeaked": true
+  },
+  "networkBudget": {
+    "spawns": 2,
+    "spent": 115,
+    "budget": 50,
+    "answer": "ok"
+  },
+  "quotaBudget": {
+    "spawns": 2,
+    "spent": 115,
+    "budget": 50,
+    "answer": "ok"
+  },
+  "warmFailureAccounting": {
+    "warmWrites": 1,
+    "coldSpawns": 1,
+    "reportedWarmUsage": 100,
+    "ledgerSpent": 15,
+    "answer": "cold ok"
+  }
+}

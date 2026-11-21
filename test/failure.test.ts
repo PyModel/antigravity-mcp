@@ -91,8 +91,8 @@ describe("policyFor", () => {
     }
   });
 
-  it("retries the same model once for a network blip", () => {
-    expect(policyFor("network").retryOnce).toBe(true);
+  it("never replays an agent turn for a network blip with an ambiguous outcome", () => {
+    expect(policyFor("network").retryOnce).toBe(false);
     expect(policyFor("quota").retryOnce).toBe(false);
   });
 });

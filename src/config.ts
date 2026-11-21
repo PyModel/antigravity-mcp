@@ -1,5 +1,6 @@
 import path from "node:path";
 import { TOOLS_BY_NAME } from "./tools.js";
+import { EFFORTS, type Effort } from "./models.js";
 
 export interface Config {
   agyPath: string;
@@ -16,7 +17,7 @@ export interface Config {
   maxOutputChars: number;
   defaultModel: string | undefined;
   /** Reasoning tier applied when a tool does not ask for one. */
-  defaultEffort: "low" | "medium" | "high" | undefined;
+  defaultEffort: Effort | undefined;
   /**
    * Refuse to delegate until the user has chosen a model and tier through
    * `set_model`. The choice is stored per machine, so this asks once.
@@ -127,9 +128,9 @@ function oneOf<T extends string>(name: string, raw: string, allowed: readonly T[
   return hit;
 }
 
-function effort(raw: string | undefined): "low" | "medium" | "high" | undefined {
+function effort(raw: string | undefined): Effort | undefined {
   if (unset(raw)) return undefined;
-  return oneOf("AGY_EFFORT", raw as string, ["low", "medium", "high"] as const);
+  return oneOf("AGY_EFFORT", raw as string, EFFORTS);
 }
 
 /**

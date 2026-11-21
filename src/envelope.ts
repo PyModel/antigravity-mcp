@@ -27,11 +27,15 @@ export interface AgyEnvelope {
   conversationId?: string;
   /** "SUCCESS" | "ERROR" observed; treated as an open set. */
   status: string;
+  /** Present when the CLI ended before a complete answer (agy >= 1.4.11). */
+  finishedReason?: string;
   response: string;
   error?: string;
   numTurns: number;
   durationSeconds: number;
   usage: AgyUsage;
+  /** False when usage was absent or malformed; zero counters are only placeholders then. */
+  usageKnown: boolean;
   /** Always an array, empty when agy omitted the field. */
   deniedActions: DeniedAction[];
   /** Present only when the run was given a --json-schema. */
@@ -47,7 +51,21 @@ export const EMPTY_USAGE: AgyUsage = {
 };
 
 function num(v: unknown): number {
-  return typeof v === "number" && Number.isFinite(v) ? v : 0;
+  return typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : 0;
+}
+
+function hasUsage(raw: unknown): boolean {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return false;
+  const u = raw as Record<string, unknown>;
+  return [
+    "input_tokens",
+    "output_tokens",
+    "thinking_tokens",
+    "cache_read_tokens",
+    "total_tokens",
+  ].every(
+    (key) => typeof u[key] === "number" && Number.isFinite(u[key]) && (u[key] as number) >= 0,
+  );
 }
 
 function str(v: unknown): string {
@@ -80,11 +98,13 @@ function shape(o: Record<string, unknown>): AgyEnvelope | null {
   return {
     ...(conversationId ? { conversationId } : {}),
     status: o.status,
+    ...(str(o.finished_reason) ? { finishedReason: str(o.finished_reason) } : {}),
     response: str(o.response),
     ...(str(o.error) ? { error: str(o.error) } : {}),
     numTurns: num(o.num_turns),
     durationSeconds: num(o.duration_seconds),
     usage: usageOf(o.usage),
+    usageKnown: hasUsage(o.usage),
     deniedActions: deniedOf(o.denied_actions),
     ...(o.structured_output !== undefined ? { structuredOutput: o.structured_output } : {}),
   };

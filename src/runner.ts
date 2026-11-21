@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import type { Config } from "./config.js";
+import type { Effort } from "./models.js";
 import type { Capabilities } from "./capabilities.js";
 import {
   parseEnvelope,
@@ -16,9 +17,17 @@ import {
   type AgyUsage,
   type DeniedAction,
 } from "./envelope.js";
-import { AgyFailure, classifyRun, InvalidRequestError } from "./failure.js";
+import {
+  AgyFailure,
+  classifyRun,
+  InvalidRequestError,
+  MAX_RAW_OUTPUT_BYTES,
+  OutputLimitError,
+  parseAgyError,
+} from "./failure.js";
 import { LogTail } from "./logtail.js";
 import { detectQuota, QuotaError } from "./quota.js";
+import { redact } from "./egress.js";
 
 /** How much authority a single run is granted. */
 export type RunMode = "plan" | "accept-edits";
@@ -30,7 +39,7 @@ export interface RunRequest {
   dirs?: string[];
   model?: string;
   /** Reasoning tier, separate from the model. */
-  effort?: "low" | "medium" | "high";
+  effort?: Effort;
   mode?: RunMode;
   sandbox?: boolean;
   /** Let agy expand the user's slash commands and skills. Off unless asked for. */
@@ -64,17 +73,21 @@ export interface RunResult {
   /** Tool actions agy wanted and was refused — the proof of what it could not do. */
   deniedActions: DeniedAction[];
   usage: AgyUsage;
+  usageKnown: boolean;
   structuredOutput?: unknown;
   numTurns: number;
   timedOut: boolean;
+  finishedReason?: string;
 }
 
 export interface AgyProcess {
-  /** What agy printed, less any head dropped to stay under the output cap. */
+  /** What agy printed, up to the raw output cap. */
   stdout(): string;
-  /** How many leading stdout chars were dropped to stay under the cap. */
+  /** Legacy adapters may report dropped characters; dropping is an incomplete result. */
   stdoutDropped?(): number;
   stderr(): string;
+  /** The native adapter stops accepting bytes after this limit is exceeded. */
+  outputLimit?(): { source: string; limitBytes: number } | undefined;
   /** Settles when the process is fully done (exit + closed pipes, or spawn error). */
   wait(): Promise<{ code: number | null; error?: NodeJS.ErrnoException }>;
   /** Signals the whole process group so web-search helpers can't outlive agy. */
@@ -119,9 +132,11 @@ export interface RunnerDeps {
   confinement?: Confinement;
 }
 
-/** The most stdout kept per run. The envelope is printed last, so the head is what goes. */
-export const MAX_STDOUT_CHARS = 64 * 1024 * 1024;
-const MAX_STDERR_CHARS = 1024 * 1024;
+/** Retained for adapters that used the old character ceiling. Raw limits use bytes. */
+export const MAX_STDOUT_CHARS = MAX_RAW_OUTPUT_BYTES;
+const MAX_STDERR_BYTES = 1024 * 1024;
+/** Error metadata is useful for recovery but must not duplicate an entire oversized stream. */
+export const MAX_PARTIAL_OUTPUT_CHARS = 1024 * 1024;
 /** How much of the run log is kept for the final quota check; a 429 is one line. */
 const MAX_TRAILING_LOG_CHARS = 1024 * 1024;
 
@@ -159,24 +174,39 @@ const spawnDetached: SpawnAgy = (file, args, opts) => {
   child.stdin?.end();
 
   let out = "";
-  let dropped = 0;
   let err = "";
+  let outBytes = 0;
+  let errBytes = 0;
+  let outputLimit: { source: string; limitBytes: number } | undefined;
+  const stopAtLimit = (source: string, limitBytes: number) => {
+    outputLimit ??= { source, limitBytes };
+    if (child.pid === undefined) return;
+    try {
+      process.kill(-child.pid, "SIGTERM");
+    } catch {
+      child.kill("SIGTERM");
+    }
+  };
   // A UTF-8 sequence can straddle two chunks; StringDecoder holds the partial
   // bytes instead of turning them into U+FFFD.
   const outDecoder = new StringDecoder("utf8");
   const errDecoder = new StringDecoder("utf8");
   child.stdout?.on("data", (d: Buffer) => {
-    const next = appendTail(out, outDecoder.write(d), MAX_STDOUT_CHARS);
-    out = next.text;
-    dropped += next.dropped;
+    if (outputLimit) return;
+    const room = MAX_RAW_OUTPUT_BYTES - outBytes;
+    out += outDecoder.write(d.subarray(0, room));
+    outBytes += Math.min(d.length, room);
+    if (d.length > room) stopAtLimit("stdout", MAX_RAW_OUTPUT_BYTES);
   });
   child.stderr?.on("data", (d: Buffer) => {
-    if (err.length < MAX_STDERR_CHARS) err += errDecoder.write(d);
+    if (outputLimit) return;
+    const room = MAX_STDERR_BYTES - errBytes;
+    err += errDecoder.write(d.subarray(0, room));
+    errBytes += Math.min(d.length, room);
+    if (d.length > room) stopAtLimit("stderr", MAX_STDERR_BYTES);
   });
   const flush = () => {
-    const next = appendTail(out, outDecoder.end(), MAX_STDOUT_CHARS);
-    out = next.text;
-    dropped += next.dropped;
+    out += outDecoder.end();
     err += errDecoder.end();
   };
 
@@ -187,6 +217,16 @@ const spawnDetached: SpawnAgy = (file, args, opts) => {
     let closeFallback: NodeJS.Timeout | undefined;
     child.on("exit", (code) => {
       exitCode = code;
+      // The group can still contain helpers after its leader exits. Reaping
+      // only the leader (or resolving after a pipe-drain timeout) must not
+      // cancel the only escalation capable of stopping those descendants.
+      if (child.pid !== undefined) {
+        try {
+          process.kill(-child.pid, "SIGKILL");
+        } catch {
+          /* group already gone */
+        }
+      }
       closeFallback = setTimeout(() => {
         flush();
         resolve({ code: exitCode });
@@ -206,8 +246,8 @@ const spawnDetached: SpawnAgy = (file, args, opts) => {
 
   return {
     stdout: () => out,
-    stdoutDropped: () => dropped,
     stderr: () => err,
+    outputLimit: () => outputLimit,
     wait: () => done,
     kill: (signal) => {
       if (child.pid === undefined) return;
@@ -351,8 +391,12 @@ export interface BuildArgsOptions {
   outputFormat?: "json" | "stream-json";
 }
 
-export function buildArgs(req: RunRequest, cfg: Config, opts: BuildArgsOptions): string[] {
-  const { caps, logPath } = opts;
+/** Shared by cold and resident processes: requested restrictions fail closed. */
+export function permissionArgs(
+  req: Pick<RunRequest, "mode" | "sandbox" | "slashCommands">,
+  cfg: Config,
+  caps: Capabilities,
+): string[] {
   const args: string[] = [];
   const push = (flag: string, ...values: string[]) => {
     if (caps.has(flag)) args.push(flag, ...values);
@@ -384,6 +428,15 @@ export function buildArgs(req: RunRequest, cfg: Config, opts: BuildArgsOptions):
   // Best-effort: a build with no such flag most plausibly has no slash-command
   // expansion to disable, so refusing the run would buy nothing.
   if (!req.slashCommands) push("--disable-slash-commands");
+  return args;
+}
+
+export function buildArgs(req: RunRequest, cfg: Config, opts: BuildArgsOptions): string[] {
+  const { caps, logPath } = opts;
+  const args = permissionArgs(req, cfg, caps);
+  const push = (flag: string, ...values: string[]) => {
+    if (caps.has(flag)) args.push(flag, ...values);
+  };
 
   args.push("--add-dir", req.cwd);
   for (const dir of req.dirs ?? []) if (dir !== req.cwd) args.push("--add-dir", dir);
@@ -423,6 +476,28 @@ export function truncate(text: string, max: number): Truncation {
       `The end of the output follows.]\n\n${text.slice(-tail)}`,
     from: text.length,
   };
+}
+
+/** Preserve both ends of a stopped turn without copying its whole raw transcript. */
+export function clipPartialOutput(text: string, scrub = false): string {
+  if (scrub) text = redact(text).text;
+  if (text.length <= MAX_PARTIAL_OUTPUT_CHARS) return text;
+  const half = MAX_PARTIAL_OUTPUT_CHARS / 2;
+  return (
+    `${text.slice(0, half)}\n\n[claude-agy-mcp: partial output clipped; ` +
+    `${text.length - MAX_PARTIAL_OUTPUT_CHARS} characters omitted.]\n\n${text.slice(-half)}`
+  );
+}
+
+function outputLimitOf(proc: AgyProcess): { source: string; limitBytes: number } | undefined {
+  if (proc.outputLimit) return proc.outputLimit();
+  // Compatibility for external/fake adapters; the native adapter counts bytes
+  // as they arrive instead of rescanning its accumulated output on every poll.
+  if ((proc.stdoutDropped?.() ?? 0) > 0 || Buffer.byteLength(proc.stdout()) > MAX_RAW_OUTPUT_BYTES)
+    return { source: "stdout", limitBytes: MAX_RAW_OUTPUT_BYTES };
+  if (Buffer.byteLength(proc.stderr()) > MAX_STDERR_BYTES)
+    return { source: "stderr", limitBytes: MAX_STDERR_BYTES };
+  return undefined;
 }
 
 /**
@@ -503,6 +578,8 @@ export async function runAgy(
   let untrack: (() => void) | undefined;
   let exited = false;
   let streamedText = "";
+  let streamedConversationId: string | undefined;
+  let outputFailure: OutputLimitError | undefined;
 
   const command = commandFor(
     req.confineTo,
@@ -558,6 +635,10 @@ export async function runAgy(
         const { events, rest } = parseStreamEvents(chunk);
         streamRest = rest;
         for (const ev of events) {
+          if (ev.kind === "init") {
+            streamedConversationId = ev.conversationId ?? streamedConversationId;
+            continue;
+          }
           if (ev.kind !== "step") continue;
           streamedText += ev.textDelta;
           report(req.onProgress, {
@@ -569,25 +650,36 @@ export async function runAgy(
         }
       };
 
+      const stopForOutputLimit = (failure: OutputLimitError) => {
+        outputFailure ??= failure;
+        drainProgress();
+        if (!exited) killChild();
+        finish(() => resolve({ stdout: proc.stdout(), stderr: proc.stderr(), code: null }));
+      };
+
       const poller = setInterval(async () => {
         if (polling || settled) return;
         polling = true;
         try {
+          const limit = outputLimitOf(proc);
+          if (limit) {
+            stopForOutputLimit(new OutputLimitError(limit.source, limit.limitBytes, req.model));
+            return;
+          }
           drainProgress();
-          // agy only reports RESOURCE_EXHAUSTED to its log file, never to stdout.
-          // Bank every read before checking `settled`: `tail.read()` consumes the
-          // lines, so returning early here used to throw away a 429 that arrived
-          // while the run was finishing, and the post-run check then found an
-          // empty log and reported "empty answer" instead of failing over.
+          // Bank each consumed line even if the process settles during the read:
+          // a terminal quota diagnostic can arrive just before process exit.
           const appended = await tail.read();
           if (appended)
             trailingLog = appendTail(trailingLog, appended, MAX_TRAILING_LOG_CHARS).text;
           if (settled) return; // settled during the async read — don't kill a finished run
-          const quota = appended && detectQuota(appended);
-          if (quota) {
-            killChild();
-            finish(() => reject(new QuotaError(req.model, quota)));
-          }
+          // A 429 in the log may be a transient per-minute limit. Current agy
+          // retries it in-process while retaining completed tool outputs.
+          // Observe logs, but only classify the terminal outcome below.
+        } catch (error) {
+          if (error instanceof OutputLimitError) stopForOutputLimit(error);
+          // File errors are swallowed by LogTail; no rejected polling promise
+          // may become an unhandled exception in a stream supervisor.
         } finally {
           polling = false;
         }
@@ -614,7 +706,21 @@ export async function runAgy(
 
       const onAbort = () => {
         killChild();
-        finish(() => reject(new Error("agy run cancelled by client.")));
+        drainProgress();
+        const envelope = outputFormat ? parseEnvelope(proc.stdout()) : null;
+        const partial = answerOf(envelope, proc.stdout(), outputFormat, streamedText);
+        finish(() =>
+          reject(
+            Object.assign(new AgyFailure("agy_error", "agy run cancelled by client.", req.model), {
+              usageKnown: envelope?.usageKnown ?? false,
+              ...(envelope ? { usage: envelope.usage, numTurns: envelope.numTurns } : {}),
+              conversationId:
+                envelope?.conversationId ?? streamedConversationId ?? req.conversationId,
+              finishedReason: "interrupted",
+              ...(partial ? { partialOutput: clipPartialOutput(partial, cfg.redact) } : {}),
+            }),
+          ),
+        );
       };
       if (req.signal?.aborted) {
         onAbort();
@@ -626,6 +732,11 @@ export async function runAgy(
         exited = true;
         if (escalate) clearTimeout(escalate);
         if (settled) return;
+        const limit = outputLimitOf(proc);
+        if (limit) {
+          stopForOutputLimit(new OutputLimitError(limit.source, limit.limitBytes, req.model));
+          return;
+        }
         drainProgress();
         if (error) {
           const failure = await spawnFailure(error, req.cwd, cfg.agyPath);
@@ -642,21 +753,37 @@ export async function runAgy(
     untrack?.();
     // Drain before deleting: a 429 that lands between the last poll tick and the
     // exit only exists in this file, and the post-run check below needs it.
-    trailingLog = appendTail(trailingLog, await tail.flush(), MAX_TRAILING_LOG_CHARS).text;
-    await rm(logPath, { force: true }).catch(() => {});
+    try {
+      trailingLog = appendTail(trailingLog, await tail.flush(), MAX_TRAILING_LOG_CHARS).text;
+    } catch (error) {
+      if (error instanceof OutputLimitError) outputFailure ??= error;
+    } finally {
+      await rm(logPath, { force: true }).catch(() => {});
+    }
   });
 
   // In text mode every line is model output, so nothing there may pass for an envelope.
   const envelope = outputFormat ? parseEnvelope(finished.stdout) : null;
   const answer = answerOf(envelope, finished.stdout, outputFormat, streamedText);
   const spent = envelope?.usage;
-
-  // A quota 429 never reaches stdout, only the log. Check it before anything
-  // else and on every path: a run that overran its print-timeout is exactly
-  // where exhaustion is most likely, and skipping the check there returned a
-  // truncated answer as a success while the model stayed uncooled.
-  const quota = detectQuota(trailingLog);
-  if (quota) throw Object.assign(new QuotaError(req.model, quota), spent ? { usage: spent } : {});
+  const details = parseAgyError(finished.stderr);
+  const conversationId = envelope?.conversationId ?? streamedConversationId;
+  if (outputFailure) {
+    throw Object.assign(outputFailure, {
+      ...(spent ? { usage: spent } : {}),
+      ...(details ? { details } : {}),
+      usageKnown: envelope?.usageKnown ?? false,
+      ...(answer ? { partialOutput: clipPartialOutput(answer, cfg.redact) } : {}),
+      ...(conversationId || req.conversationId
+        ? { conversationId: conversationId ?? req.conversationId }
+        : {}),
+      ...(envelope ? { numTurns: envelope.numTurns, deniedActions: envelope.deniedActions } : {}),
+    });
+  }
+  const finishedReason =
+    envelope?.finishedReason ??
+    (/^\[agy\] print timeout after\b/im.test(finished.stderr) ? "print_timeout" : undefined);
+  if (finishedReason === "print_timeout") timedOut = true;
 
   if (!timedOut) {
     const failure = classifyRun({
@@ -665,9 +792,38 @@ export async function runAgy(
       stderr: finished.stderr,
     });
     if (failure) {
+      const quota = failure.kind === "quota" ? detectQuota(trailingLog) : null;
       throw Object.assign(
-        new AgyFailure(failure.kind, failure.message, req.model),
-        spent ? { usage: spent } : {},
+        quota
+          ? new QuotaError(req.model, quota)
+          : new AgyFailure(failure.kind, failure.message, req.model),
+        {
+          ...(spent ? { usage: spent } : {}),
+          ...(details ? { details } : {}),
+          usageKnown: envelope?.usageKnown ?? false,
+          ...(answer ? { partialOutput: answer } : {}),
+          ...(conversationId ? { conversationId } : {}),
+          ...(finishedReason ? { finishedReason } : {}),
+          ...(envelope
+            ? { numTurns: envelope.numTurns, deniedActions: envelope.deniedActions }
+            : {}),
+          ...(envelope?.structuredOutput !== undefined
+            ? { structuredOutput: envelope.structuredOutput }
+            : {}),
+        },
+      );
+    }
+    // A promised JSON protocol with no envelope is incomplete, even when the
+    // process exits zero. Never pass raw protocol fragments off as an answer.
+    if (outputFormat && !envelope) {
+      throw Object.assign(
+        new AgyFailure("agy_error", "agy exited without a complete result envelope.", req.model),
+        {
+          ...(answer ? { partialOutput: answer } : {}),
+          ...(conversationId ? { conversationId } : {}),
+          finishedReason: "missing_result",
+          usageKnown: false,
+        },
       );
     }
   }
@@ -677,13 +833,15 @@ export async function runAgy(
   // secret straddling the cut point cannot survive by being split in half.
   return {
     output: answer,
-    ...(envelope?.conversationId ? { conversationId: envelope.conversationId } : {}),
+    ...(conversationId ? { conversationId } : {}),
     deniedActions: envelope?.deniedActions ?? [],
     usage: envelope?.usage ?? EMPTY_USAGE,
+    usageKnown: envelope?.usageKnown ?? false,
     ...(envelope && envelope.structuredOutput !== undefined
       ? { structuredOutput: envelope.structuredOutput }
       : {}),
     numTurns: envelope?.numTurns ?? 0,
     timedOut,
+    ...(finishedReason ? { finishedReason } : {}),
   };
 }

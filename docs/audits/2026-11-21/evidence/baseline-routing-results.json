@@ -1,0 +1,32 @@
+{
+  "xhigh": {
+    "exactId": "Gemini 4 Neon (XHigh)",
+    "selector": null,
+    "toolAccepts": false,
+    "setModelAccepts": false
+  },
+  "envXhigh": "AGY_EFFORT=\"xhigh\" is not valid. Expected one of low/medium/high.",
+  "followUpEffort": {
+    "runs": 1,
+    "model": null,
+    "effort": null
+  },
+  "unsupportedTier": {
+    "requested": "low",
+    "pick": {
+      "model": "Gemini 4 Argon (High)"
+    },
+    "stored": {
+      "model": "Gemini 4 Argon (High)",
+      "effort": "low",
+      "setAt": "2026-11-21T21:50:54.353Z"
+    }
+  },
+  "defaultRoute": {
+    "models": ["Gemini 3.8 Flash (High)"]
+  },
+  "explicitModelReTiered": {
+    "requested": "gemini-4-neon-low",
+    "actual": "Gemini 4 Neon (High)"
+  }
+}

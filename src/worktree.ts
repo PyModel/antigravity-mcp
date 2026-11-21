@@ -100,7 +100,7 @@ interface Budget {
 }
 
 /** Why a walk stopped: past its entry cap, or past the snapshot's deadline. */
-type Stop = "entries" | "deadline";
+type Stop = "entries" | "deadline" | "unreadable";
 
 /** Charges one entry to the budget; the reason when either limit is crossed. */
 function overBudget(budget: Budget): Stop | undefined {
@@ -110,10 +110,14 @@ function overBudget(budget: Budget): Stop | undefined {
 }
 
 const describe = (stop: Stop): string =>
-  stop === "entries" ? `more than ${MAX_ENTRIES} entries` : `scan exceeded ${DEADLINE_MS / 1000}s`;
+  stop === "entries"
+    ? `more than ${MAX_ENTRIES} entries`
+    : stop === "unreadable"
+      ? "a workspace path could not be read"
+      : `scan exceeded ${DEADLINE_MS / 1000}s`;
 
-/** Hashes one entry's identity and metadata; a vanished entry hashes as missing. */
-async function hashMeta(hash: Hash, full: string): Promise<void> {
+/** Hashes one entry's identity and metadata; an unreadable or vanished entry is unknown. */
+async function hashMeta(hash: Hash, full: string): Promise<boolean> {
   hash.update(full).update("\0");
   try {
     // lstat: a symlink is hashed as a link, never followed, so a loop cannot
@@ -121,9 +125,10 @@ async function hashMeta(hash: Hash, full: string): Promise<void> {
     const st = await lstat(full);
     hash.update(`${st.mode}:${st.size}:${st.mtimeMs}`);
   } catch {
-    hash.update("missing");
+    return false;
   }
   hash.update("\0");
+  return true;
 }
 
 /**
@@ -141,7 +146,7 @@ async function walk(
   try {
     entries = await readdir(dir, { withFileTypes: true });
   } catch {
-    return undefined; // an unreadable directory is not evidence of a change
+    return "unreadable"; // unreadable is unknown, never proof of an unchanged tree
   }
   for (const e of entries.sort((a, b) => (a.name < b.name ? -1 : 1))) {
     if (ALWAYS_SKIP.has(e.name) || (top && TOP_SKIP.has(e.name))) continue;
@@ -151,7 +156,7 @@ async function walk(
     // agy writes its own state on every run, and a confined run may, so a root
     // holding it would otherwise always look changed.
     if (insideState(full)) continue;
-    await hashMeta(hash, full);
+    if (!(await hashMeta(hash, full))) return "unreadable";
     if (e.isDirectory()) {
       const incomplete = await walk(hash, full, budget, false);
       if (incomplete) return incomplete;
@@ -180,13 +185,13 @@ async function hashListed(
     if (over) return over;
     const full = path.join(root, rel);
     if (insideState(full.replace(/\/$/, ""))) continue;
-    await hashMeta(hash, full);
+    if (!(await hashMeta(hash, full))) return "unreadable";
     if (!rel.endsWith("/")) continue;
     if (TOP_SKIP.has(path.basename(full)) && path.dirname(full) === root) continue;
     const inner: Budget = { seen: 0, max: IGNORED_DIR_ENTRIES, deadline: budget.deadline };
     const stop = await walk(hash, full, inner, false);
     budget.seen += inner.seen;
-    if (stop === "deadline") return stop;
+    if (stop === "deadline" || stop === "unreadable") return stop;
     if (stop === "entries") hash.update("truncated\0");
   }
   return undefined;

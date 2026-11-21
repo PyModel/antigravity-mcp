@@ -1,0 +1,87 @@
+{
+  "metadata": {
+    "vulnerabilities": {
+      "info": 0,
+      "low": 0,
+      "moderate": 7,
+      "high": 5,
+      "critical": 1,
+      "total": 13
+    },
+    "dependencies": {
+      "prod": 94,
+      "dev": 183,
+      "optional": 74,
+      "peer": 36,
+      "peerOptional": 0,
+      "total": 276
+    }
+  },
+  "affected_packages": [
+    {
+      "name": "@hono/node-server",
+      "severity": "moderate",
+      "direct": false
+    },
+    {
+      "name": "@modelcontextprotocol/sdk",
+      "severity": "high",
+      "direct": true
+    },
+    {
+      "name": "@vitest/mocker",
+      "severity": "moderate",
+      "direct": false
+    },
+    {
+      "name": "body-parser",
+      "severity": "high",
+      "direct": false
+    },
+    {
+      "name": "fast-uri",
+      "severity": "moderate",
+      "direct": false
+    },
+    {
+      "name": "hono",
+      "severity": "moderate",
+      "direct": false
+    },
+    {
+      "name": "ip-address",
+      "severity": "moderate",
+      "direct": false
+    },
+    {
+      "name": "proxy-addr",
+      "severity": "critical",
+      "direct": false
+    },
+    {
+      "name": "qs",
+      "severity": "moderate",
+      "direct": false
+    },
+    {
+      "name": "source-map-js",
+      "severity": "high",
+      "direct": false
+    },
+    {
+      "name": "vite",
+      "severity": "high",
+      "direct": false
+    },
+    {
+      "name": "vitest",
+      "severity": "moderate",
+      "direct": true
+    },
+    {
+      "name": "zod",
+      "severity": "high",
+      "direct": true
+    }
+  ]
+}

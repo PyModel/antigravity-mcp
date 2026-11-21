@@ -369,7 +369,7 @@ describe("delegation safety", () => {
     expect(err.message).toMatch(/not (re)?tried/i);
   });
 
-  it("still retries a write run once when the tree is provably unchanged", async () => {
+  it("does not replay a write run based only on an unchanged tree", async () => {
     const t = trees();
     let n = 0;
     const agy = fakeAgy(() =>
@@ -378,16 +378,21 @@ describe("delegation safety", () => {
         : { answer: "ok" },
     );
     const { delegator } = makeDelegator({ spawn: agy.spawn, snapshot: t.snapshot });
-    const d = await delegator.run({ ...request("delegate", { prompt: "x" }), write: true });
-    expect(d.output).toBe("ok");
-    expect(agy.runs).toHaveLength(2);
+    await expect(
+      delegator.run({ ...request("delegate", { prompt: "x" }), write: true }),
+    ).rejects.toThrow(/Not retried/);
+    expect(agy.runs).toHaveLength(1);
   });
 
   it("does not fail a write run over to the next model once the tree changed", async () => {
     const t = trees();
     const agy = fakeAgy(() => {
       t.bump("/repo");
-      return { log: `${LOG_429}\n`, answer: "", exitCode: 0 };
+      return {
+        log: `${LOG_429}\n`,
+        envelope: { status: "ERROR", error: "RESOURCE_EXHAUSTED" },
+        exitCode: 1,
+      };
     });
     const { delegator } = makeDelegator({ spawn: agy.spawn, snapshot: t.snapshot });
     await expect(
@@ -397,12 +402,16 @@ describe("delegation safety", () => {
   });
 
   it("tries a model the caller pinned even while it is cooling down", async () => {
-    const pro = "Gemini 3.1 Pro (High)";
+    const pro = "gemini-3.1-pro-high";
     let quota = true;
     const agy = fakeAgy(() => {
       if (!quota) return { answer: "ok" };
       quota = false;
-      return { log: `${LOG_429}\n`, answer: "", exitCode: 0 };
+      return {
+        log: `${LOG_429}\n`,
+        envelope: { status: "ERROR", error: "RESOURCE_EXHAUSTED" },
+        exitCode: 1,
+      };
     });
     const { delegator } = makeDelegator({ spawn: agy.spawn });
     const pinned = { ...request("delegate", { prompt: "x" }), model: pro };
@@ -420,8 +429,11 @@ describe("delegation safety", () => {
         : { envelope: { response: "ok", totalTokens: 15 } },
     );
     const { delegator } = makeDelegator({ spawn: agy.spawn });
-    await delegator.run(request("delegate", { prompt: "x" }));
-    expect(delegator.status().spent).toBe(30);
+    await expect(delegator.run(request("delegate", { prompt: "x" }))).rejects.toThrow(
+      /Not failed over/,
+    );
+    expect(delegator.status().spent).toBe(15);
+    expect(agy.runs).toHaveLength(1);
   });
 
   it("does not gate a fan-out whose every leg names its model", async () => {

@@ -2,6 +2,10 @@ import { describe, it, expect } from "vitest";
 import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { build } from "esbuild";
 import { cacheDir, FileCooldownStore } from "../src/cooldown-store.js";
 import { CooldownRegistry } from "../src/quota.js";
 
@@ -32,7 +36,9 @@ describe("FileCooldownStore", () => {
     const { dir, cleanup } = scratch();
     try {
       new FileCooldownStore(dir).save({ Flash: 1 }, 0);
-      expect(readdirSync(dir)).toEqual(["cooldowns.json"]);
+      expect(readdirSync(dir)).toEqual(["cooldowns.d"]);
+      expect(readdirSync(path.join(dir, "cooldowns.d"))).toHaveLength(1);
+      expect(readdirSync(path.join(dir, "cooldowns.d"))[0]).toMatch(/\.json$/);
     } finally {
       cleanup();
     }
@@ -76,6 +82,47 @@ describe("FileCooldownStore", () => {
 });
 
 describe("FileCooldownStore across writers", () => {
+  it("preserves concurrent process updates, including the longest expiry for a shared model", async () => {
+    const { dir, cleanup } = scratch();
+    try {
+      const entry = path.join(dir, "store.mjs");
+      await build({
+        entryPoints: [fileURLToPath(new URL("../src/cooldown-store.ts", import.meta.url))],
+        outfile: entry,
+        bundle: true,
+        platform: "node",
+        format: "esm",
+        logLevel: "silent",
+      });
+      const workers = 6;
+      await Promise.all(
+        Array.from({ length: workers }, (_, worker) =>
+          promisify(execFile)(
+            process.execPath,
+            [
+              "--input-type=module",
+              "-e",
+              `
+          import { FileCooldownStore } from ${JSON.stringify(pathToFileURL(entry).href)};
+          const store = new FileCooldownStore(${JSON.stringify(dir)});
+          for (let step = 1; step <= 20; step++) {
+            store.save({ [${JSON.stringify(`writer-${worker}`)}]: step * 100, shared: (${worker} + 1) * 1000 }, 0);
+          }
+        `,
+            ],
+            { timeout: 15_000 },
+          ),
+        ),
+      );
+      const stored = new FileCooldownStore(dir).load();
+      for (let worker = 0; worker < workers; worker++)
+        expect(stored[`writer-${worker}`]).toBe(2000);
+      expect(stored.shared).toBe(6000);
+    } finally {
+      cleanup();
+    }
+  });
+
   it("merges with what another process wrote instead of overwriting it", () => {
     const { dir, cleanup } = scratch();
     try {

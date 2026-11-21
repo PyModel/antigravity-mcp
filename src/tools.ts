@@ -1,5 +1,6 @@
 import path from "node:path";
 import { z } from "zod";
+import { EFFORTS } from "./models.js";
 import type { RunMode } from "./runner.js";
 
 const OUTPUT_RULES =
@@ -49,13 +50,12 @@ const commonShape = {
         "Normally omit — the tool routes automatically.",
     ),
   effort: z
-    .enum(["low", "medium", "high"])
+    .enum(EFFORTS)
     .optional()
     .describe(
-      "Reasoning tier. Gemini models carry their tier in the name, so this switches to the " +
-        "sibling model at that tier (Flash (High) -> Flash (Medium)); agy's own --effort flag " +
-        "only reaches models without a tier. Defaults to the user's set_model choice, else the " +
-        "tool's own tier.",
+      "Reasoning tier supported by the selected model in `agy models`. A family selector " +
+        "can choose its listed sibling at this tier. An exact model ID or label fixes the " +
+        "variant: a conflicting effort is rejected. xhigh/max require a listed variant.",
     ),
   slash_commands: z
     .boolean()
@@ -222,9 +222,10 @@ export const TOOLS: ToolDef[] = [
   defineTool({
     name: "adversarial_review",
     description:
-      "Get an adversarial second opinion from a different model family (Gemini Pro). " +
-      "ALWAYS use this for plan critiques, design reviews, and pre-merge code review: " +
-      "it hunts for flaws, edge cases, security issues, and unstated assumptions you may have missed. " +
+      "Get an adversarial review using the selected model or the tool's available route. " +
+      "Use this for plan critiques, design reviews, and pre-merge code review: " +
+      "it hunts for flaws, edge cases, security issues, and unstated assumptions. " +
+      "Pin a different model explicitly when independent model-family review is needed. " +
       "Pass either `content` or `files` — a call with neither is rejected. " +
       "Pass `schema` to get ranked findings back as data instead of prose.",
     schema: z
@@ -345,6 +346,9 @@ export const TOOLS: ToolDef[] = [
       .refine((a) => !(a.tasks && a.models), {
         message:
           "delegate_many runs `tasks` on the automatic route; pass `models` only with `prompt`.",
+      })
+      .refine((a) => !(a.model && a.models), {
+        message: "delegate_many accepts either singular `model` or `models`, not both.",
       }),
     chain: ["gemini-flash@latest-high", "gemini-pro@latest-high", "claude-opus@latest"],
     privilege: "read-only",
@@ -372,7 +376,7 @@ export const TOOLS: ToolDef[] = [
             "Omit to accept the default (AGY_DEFAULT_MODEL, Gemini Flash High out of the box).",
         ),
       effort: z
-        .enum(["low", "medium", "high"])
+        .enum(EFFORTS)
         .optional()
         .describe("The tier the user chose. Omit to take the tier the model name carries."),
     }),

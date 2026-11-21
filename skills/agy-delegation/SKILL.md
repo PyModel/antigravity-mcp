@@ -57,14 +57,27 @@ Either way the bridge fingerprints the working tree around every plan-mode run.
 `READ-ONLY VIOLATION` means an unenforced run changed the tree. `WORKING TREE CHANGED`
 means the tree moved even though agy was blocked, so another process wrote, or agy
 escaped through something it launched outside its sandbox. Inspect the tree before
-trusting the answer in both cases. No warning means the bridge looked and found nothing.
-A tree it could not fingerprint produces no claim in either direction. The fingerprint
+trusting the answer in both cases. No warning is only a bounded snapshot observation,
+not proof that the run had no effects. A tree it could not fingerprint produces no clean-tree claim. The fingerprint
 sees ignored files by size and mtime only, and dependency and build trees such as
 `node_modules` as one entry.
 
-A failed call that says `Not retried` or `Not failed over` was a run that may already
-have taken effect. Inspect the tree before calling again; the bridge refused to repeat
-it so the effect would not happen twice.
+A dispatched turn that fails may already have taken effect, including outside the
+working tree. The bridge does not automatically replay it after network/quota errors,
+partial output, or cancellation. Inspect the result and tree before continuing deliberately;
+an unchanged fingerprint is diagnostic evidence, not permission to resend.
 
 The absence of a denied-actions note proves nothing on its own, because denied actions
 only ever populate when the permission bypass is off.
+
+## Select from current capabilities
+
+Use `agy_status` to inspect the account's listed models and configured tool routes. Exact
+IDs and labels fix their listed variant. A family selector can choose an actually listed
+effort sibling. `low`, `medium`, `high`, `xhigh`, and `max` are the supported vocabulary;
+the inventory determines each model's subset. Do not invent a max variant or treat
+Orchestrator's `(Carbon)`, `(Neon)`, or `(Argon)` labels as efforts.
+
+The raw CLI relay supplied by `agy-delegate` is a separate fallback. Its plan mode is
+advisory on every platform, and its report distinguishes incomplete coverage from a
+verified snapshot comparison. It does not inherit the bridge's macOS confinement.

@@ -17,8 +17,15 @@ import {
 import { READ_ONLY_TREE_MOVED, READ_ONLY_VIOLATION } from "../src/delegation.js";
 import { commandFor } from "../src/runner.js";
 import { renderDelegation } from "../src/server.js";
-import { WarmSessions, WarmUnavailable, type SessionProcess } from "../src/warm.js";
-import { fakeAgy, fullCaps, makeDelegator, testConfig, toolNamed } from "./support.js";
+import { WarmSessions, type SessionProcess } from "../src/warm.js";
+import {
+  envelopeJson,
+  fakeAgy,
+  fullCaps,
+  makeDelegator,
+  testConfig,
+  toolNamed,
+} from "./support.js";
 
 const request = (tool: string, args: Record<string, unknown>) => ({
   tool: toolNamed(tool),
@@ -268,11 +275,29 @@ describe("WarmSessions confinement", () => {
   const cfg = { ...testConfig, warmSessions: true };
   const session = () => {
     const spawned: { file: string; args: string[] }[] = [];
+    let emit = (_chunk: string) => {};
     const spawnSession = (file: string, args: string[]): SessionProcess => {
       spawned.push({ file, args });
-      return { write: () => {}, onData: () => {}, onExit: () => {}, kill: () => {} };
+      return {
+        write: () => {},
+        onData: (cb) => {
+          emit = cb;
+        },
+        onExit: () => {},
+        kill: () => {},
+      };
     };
-    return { spawned, spawnSession };
+    return {
+      spawned,
+      spawnSession,
+      answer: () =>
+        emit(
+          JSON.stringify({
+            event: "result",
+            result: JSON.parse(envelopeJson({ response: "done", conversationId: "c1" })),
+          }) + "\n",
+        ),
+    };
   };
 
   it("starts a resident process under confinement and refuses to reuse it unconfined", async () => {
@@ -282,11 +307,14 @@ describe("WarmSessions confinement", () => {
       spawnSession: s.spawnSession,
       confinement: rec.confinement,
     });
-    void warm.turn("c1", "/repo", "q", { timeoutMs: 60_000, confineTo: ["/repo"] }).catch(() => {});
+    const first = warm.turn("c1", "/repo", "q", { timeoutMs: 60_000, confineTo: ["/repo"] });
     expect(s.spawned[0]!.file).toBe("sandbox");
+    s.answer();
+    await first;
     await expect(warm.turn("c1", "/repo", "q2", { timeoutMs: 60_000 })).rejects.toThrow(
-      WarmUnavailable,
+      /different write confinement/,
     );
+    expect(s.spawned).toHaveLength(1);
     warm.shutdown();
   });
 

@@ -28,7 +28,10 @@ describe("FilePreferenceStore", () => {
 
   it("drops an effort it does not recognise rather than passing it to agy", () => {
     const d = dir();
-    writeFileSync(path.join(d, "preferences.json"), JSON.stringify({ model: "M", effort: "max" }));
+    writeFileSync(
+      path.join(d, "preferences.json"),
+      JSON.stringify({ model: "M", effort: "unsupported" }),
+    );
     expect(new FilePreferenceStore(d).load()).toEqual({ model: "M", setAt: "" });
   });
 

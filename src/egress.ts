@@ -137,7 +137,7 @@ export function redact(text: string): Redaction {
 }
 
 /**
- * Redacts every string anywhere in a JSON-shaped value.
+ * Redacts every string key and value anywhere in a JSON-shaped value.
  *
  * `structuredContent` is model output too, and it is the one return path a
  * caller parses rather than reads, so leaving it unscrubbed put secrets
@@ -153,8 +153,29 @@ export function redactDeep(value: unknown): { value: unknown; count: number } {
     }
     if (Array.isArray(v)) return v.map(walk);
     if (v && typeof v === "object") {
+      const entries = Object.entries(v as Record<string, unknown>).map(([key, x]) => {
+        const safe = redact(key);
+        count += safe.count;
+        return { original: key, key: safe.text, value: walk(x) };
+      });
+      const frequencies = new Map<string, number>();
+      for (const { key } of entries) frequencies.set(key, (frequencies.get(key) ?? 0) + 1);
+      const reserved = new Set(entries.map(({ key }) => key));
+      let collision = 0;
       return Object.fromEntries(
-        Object.entries(v as Record<string, unknown>).map(([k, x]) => [k, walk(x)]),
+        entries.map(({ original, key, value }) => {
+          // Two secret-shaped keys may redact to the same marker. Preserve all
+          // fields and leave an unrelated, already-safe key at its original name.
+          if (key !== original && frequencies.get(key)! > 1) {
+            let unique: string;
+            do {
+              unique = `${key} [redacted field ${++collision}]`;
+            } while (reserved.has(unique));
+            reserved.add(unique);
+            return [unique, value];
+          }
+          return [key, value];
+        }),
       );
     }
     return v;

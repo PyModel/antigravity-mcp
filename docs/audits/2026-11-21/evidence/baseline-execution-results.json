@@ -1,0 +1,42 @@
+{
+  "snapshot": "29f5b5c8d5f4343d1cab33c774f8deda359e64a2",
+  "evidence": [
+    {
+      "case": "warm_options_lost",
+      "warmRoots": ["/repo"],
+      "coldRoots": ["/repo", "/extra"],
+      "warmSlashDisabled": true
+    },
+    {
+      "case": "resident_survives_cold_turn",
+      "residentCount": 1,
+      "residentTurns": 2,
+      "coldTurns": 1,
+      "killsBeforeShutdown": []
+    },
+    {
+      "case": "warm_drop_then_shutdown_loses_sigkill",
+      "kills": ["SIGTERM"],
+      "residentCount": 0
+    },
+    {
+      "case": "warm_missing_sandbox_capability",
+      "warmSucceeded": true,
+      "warmSandboxFlag": false,
+      "coldFailure": "agy 1.2.0 does not support --sandbox, which this call needs in order to restrict the run. Refusing rather than running with more authority than requested. Upgrade the Antigravity CLI, or set AGY_PATH to a build that supports it."
+    },
+    {
+      "case": "cli_timeout_partial_lost",
+      "errorKind": "agy_error",
+      "errorMessage": "print timeout after 10s",
+      "partialPreserved": false,
+      "sessionPreserved": false,
+      "finishedReasonParsed": null
+    },
+    {
+      "case": "cold_parent_exit_cancels_group_escalation",
+      "grandchildAliveAfterCancellation": true,
+      "elapsedMs": 5638
+    }
+  ]
+}

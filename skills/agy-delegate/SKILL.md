@@ -14,7 +14,7 @@ compatibility: >-
   `scripts/relay.mjs`, which needs only Node.js, git, and a shell (bash/zsh on macOS/Linux, or Git
   Bash/WSL on Windows).
 metadata:
-  version: 0.7.0
+  version: 0.8.0
 ---
 
 # Antigravity Delegate
@@ -24,7 +24,7 @@ You are the **orchestrator**. This skill lets you hand a bounded coding task to 
 yourself. You write the brief and own the judgment; Antigravity does the typing in its own
 conversation; you verify and commit.
 
-There are two dispatch paths and the loop around them is identical:
+Choose the available dispatch path, then apply the review loop below:
 
 - **MCP (preferred)** - the `claude-agy-mcp` bridge exposes `delegate`, `follow_up`,
   `adversarial_review`, `delegate_many` and friends as tools. Use this whenever the tools are
@@ -50,23 +50,26 @@ There are two dispatch paths and the loop around them is identical:
    ToolSearch("select:mcp__claude-agy-mcp__delegate,mcp__claude-agy-mcp__follow_up,mcp__claude-agy-mcp__adversarial_review,mcp__claude-agy-mcp__delegate_many,mcp__claude-agy-mcp__agy_status,mcp__claude-agy-mcp__set_model")
    ```
 
-2. **Call `agy_status`.** It never reaches agy, so it is a free liveness check. It reports the agy
+2. **Call `agy_status`.** This sends no model prompt; metadata probes may invoke the CLI. It reports the agy
    version, the models on offer, the resolved model chain per tool, quota cooldowns, in-flight runs,
    and whether a `set_model` choice has already been recorded.
 
 3. **Settle the model once, if `agy_status` shows no choice recorded.** The bridge defaults to
    `AGY_ASK_MODEL=true` and **refuses to delegate** until `set_model` has been called - the first
-   delegation returns an error, not a result. Ask the user "proceed with the default, or change model
-   or effort?", then call `set_model` once: no arguments accepts the default (Gemini Flash High), or
-   pass what they chose. The choice is saved per machine and no tool asks again. An explicit `model`
+   delegation returns an error, not a result. If the user already specified a choice, record it
+   without asking again. Otherwise ask once whether to accept the configured default or choose a
+   listed variant, then call `set_model`. The choice is saved per machine. An explicit `model`
    on a single call still wins for that call.
 
 4. **Know the working root.** Pass it as `cwd` on every call; add sibling repos or a base worktree
    through `dirs`.
 
-Model selection is otherwise automatic: each tool has a fallback chain of family selectors that
-follows new Gemini generations and fails over on quota exhaustion. Do not pin a `model` unless the
-user named one.
+Inspect each tool's configured chain in `agy_status`; family selectors stay within that family.
+Resolve choices against the current account's inventory. Exact IDs and labels fix their listed
+effort. Selectors may choose an advertised effort sibling. The vocabulary is `low`, `medium`, `high`,
+`xhigh`, and `max`, but a model supports only variants the inventory actually lists. An Orchestrator
+label such as `(Carbon)` names a composite variant, not an effort. Availability depends on the
+account, plan, provider, and CLI; an API model ID is not automatically an AGY ID.
 
 ## The loop
 
@@ -137,9 +140,9 @@ don't accept:**
   git is your only source here.
 - **Re-run the project's gates yourself** - the test/lint/build commands from step 1.
 - **Read the diff against the brief:** did Antigravity do what was asked, nothing more and nothing less?
-- **Get a second opinion cheaply:** pass the diff to `adversarial_review` (a different model family,
-  routed to Pro) with a `focus` when one applies. It is an extra pair of eyes, not a substitute for
-  your own read.
+- **Get a second opinion:** pass the diff to `adversarial_review` with a `focus` when one applies.
+  Check its resolved model in `agy_status`; choose a different listed family when independence
+  matters. Its answer supplements your own review.
 - **Run the relevant guard skills** on the diff if you have them installed.
 - For schema/migration changes, round-trip them; for removals, grep for dangling references.
 
@@ -159,8 +162,8 @@ diff holds:
 
 Headless `agy --print` cannot answer a permission prompt, so without
 `--dangerously-skip-permissions` it auto-denies **every** permissioned tool - including `read_file` -
-and a single denial ends the run with an empty response. The bridge therefore passes the bypass by
-default (`AGY_SKIP_PERMISSIONS=true`). The human accepted that trade-off on 2026-09-11.
+and a run may end without performing the requested action. The bridge passes the bypass by
+default (`AGY_SKIP_PERMISSIONS=true`). Treat the delegated task as authorized shell access.
 
 What that means in practice, and what the bridge does about it:
 
@@ -174,14 +177,14 @@ What that means in practice, and what the bridge does about it:
   an app or launchd escapes it.
 - **The bridge watches in both modes.** It fingerprints the working tree around every plan-mode run
   and warns `READ-ONLY VIOLATION` or, under enforcement, `WORKING TREE CHANGED` when the tree moved.
-  Absence of a warning means it looked and found nothing; a run it could not fingerprint says nothing
-  at all rather than claiming the tree is clean. Files git ignores are covered by size and mtime only,
+  Absence of a warning is only a bounded snapshot observation; it does not prove the run had no
+  effects. A run it could not fingerprint makes no clean-tree claim. Files git ignores are covered by size and mtime only,
   dependency and build trees such as `node_modules` as one entry, and any other writer during the
   run moves it too.
-- **A write run that may have taken effect is never repeated for you.** After a network error or a
-  429, a `write: true` run is retried or failed over only when the tree is provably unchanged.
-  Otherwise the call fails with `Not retried` or `Not failed over`: inspect the tree, then re-dispatch
-  deliberately.
+- **A dispatched turn is not automatically repeated by the bridge.** A network error, quota error,
+  partial output, or cancellation can follow local or external side effects. Inspect the available
+  result and workspace before an intentional continuation. An unchanged fingerprint cannot prove
+  that nothing happened. Native CLI retries remain the CLI's responsibility.
 - **The denied-actions note only appears when the grant is off.** With the default grant you will not
   see one, so its absence proves nothing. The violation warning is the signal to trust.
 - **A restriction that cannot be enforced fails the call.** If the installed agy does not support
@@ -196,6 +199,12 @@ What that means in practice, and what the bridge does about it:
 **The only containment is the read-only block on a macOS plan-mode run's own roots.** A `write: true`
 dispatch is not sandboxed at all. Treat a dispatch as running with your own shell access. If a task genuinely must not touch the rest of the disk, say so and have the human
 arrange isolation outside the bridge - a container, a throwaway checkout, or a restricted account.
+
+**The raw relay has its own contract.** It provides no read-only enforcement on any platform.
+`--read-only` requests advisory plan mode and compares bounded content snapshots of the supplied
+roots. A violation exits nonzero; unreadable or incomplete snapshot coverage is reported as
+`incomplete`, not clean. Read the relay's structured result and coverage fields. A raw relay test
+does not validate the MCP bridge's confinement, routing, quotas, or retry behavior.
 
 ## Authorization model
 

@@ -3,6 +3,13 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
+/** Vocabulary is shared; an effort is usable only when the account lists it. */
+export const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
+export type Effort = (typeof EFFORTS)[number];
+export function isEffort(value: unknown): value is Effort {
+  return typeof value === "string" && (EFFORTS as readonly string[]).includes(value);
+}
+
 /**
  * `agy models`, with stdin closed: agy reads stdin until EOF even in print mode,
  * so an open stdin pipe hangs it forever.
@@ -25,7 +32,7 @@ export interface ModelInfo {
   family: string;
   /** Version components, most significant first; empty when the name carries none. */
   version: number[];
-  /** The parenthesised tier, lowercased: "high" | "medium" | "low" | "thinking" | undefined. */
+  /** A recognised effort suffix; legacy Thinking rows remain selectable. */
   effort?: string;
 }
 
@@ -34,8 +41,11 @@ const VERSION_TOKEN = /^\d+(?:\.\d+)*$/;
 /** Splits "Gemini 3.8 Flash (High)" into its family, version and effort. */
 export function describeModel(id: string, name: string): ModelInfo {
   const paren = /\(([^)]*)\)\s*$/.exec(name);
-  const effort = paren?.[1]?.trim().toLowerCase();
-  const head = paren ? name.slice(0, paren.index) : name;
+  const suffix = paren?.[1]?.trim().toLowerCase();
+  // Parentheses may name a fixed variant, e.g. Orchestrator (Carbon).
+  // Treat only actual effort names and legacy Thinking as tier metadata.
+  const effort = isEffort(suffix) || suffix === "thinking" ? suffix : undefined;
+  const head = effort && paren ? name.slice(0, paren.index) : name;
 
   const version: number[] = [];
   const familyWords: string[] = [];
@@ -67,35 +77,40 @@ export function describeModel(id: string, name: string): ModelInfo {
  */
 export function parseListing(output: string): ModelInfo[] {
   const rows: ModelInfo[] = [];
+  const seen = new Set<string>();
   for (const line of output.split("\n")) {
     const parts = line.split("\t").map((s) => s.trim().replace(/\s*\(current\)$/, ""));
     if (parts.length < 2) continue; // header and blank lines have no tab
     const [id, name] = parts;
-    if (!id || !name) continue;
+    if (!id || !name || seen.has(id)) continue;
+    seen.add(id);
     rows.push(describeModel(id, name));
   }
   return rows;
 }
 
 /** `family@latest[-effort]` or `family@3.7[-effort]`. */
-const SELECTOR = /^([a-z0-9-]+)@(latest|[\d.]+)(?:-(high|medium|low|thinking))?$/i;
+const SELECTOR = /^([a-z0-9-]+)@(latest|\d+(?:\.\d+)*)(?:-(high|medium|low|xhigh|max|thinking))?$/i;
 
 function newerThan(a: number[], b: number[]): boolean {
   for (let i = 0; i < Math.max(a.length, b.length); i++) {
-    const x = a[i] ?? -1;
-    const y = b[i] ?? -1;
+    const x = a[i] ?? 0;
+    const y = b[i] ?? 0;
     if (x !== y) return x > y;
   }
   return false;
 }
 
 /**
- * Resolves one chain entry to a display name agy will accept, or undefined.
+ * Resolves one chain entry to the canonical listed CLI id, or undefined.
  * An entry may be an exact display name, an id, or a family selector.
  */
 export function resolveEntry(entry: string, available: ModelInfo[]): string | undefined {
-  const exact = available.find((m) => m.name === entry || m.id === entry);
-  if (exact) return exact.name;
+  const exactId = available.find((m) => m.id === entry);
+  if (exactId) return exactId.id;
+  const exactNames = available.filter((m) => m.name === entry);
+  if (exactNames.length === 1) return exactNames[0]!.id;
+  if (exactNames.length > 1) return undefined; // A duplicated label is not an identity.
 
   const sel = SELECTOR.exec(entry);
   if (!sel) return undefined;
@@ -108,12 +123,21 @@ export function resolveEntry(entry: string, available: ModelInfo[]): string | un
     if (m.family !== family!.toLowerCase()) continue;
     if (effort && m.effort !== effort.toLowerCase()) continue;
     if (wantVersion && m.version.join(".") !== wantVersion.join(".")) continue;
-    if (!best || newerThan(m.version, best.version)) best = m;
+    if (
+      !best ||
+      newerThan(m.version, best.version) ||
+      (!newerThan(best.version, m.version) && stableVariantOrder(m, best) < 0)
+    )
+      best = m;
   }
-  return best?.name;
+  return best?.id;
 }
 
-export type Effort = "low" | "medium" | "high";
+/** An untiered selector has a deterministic balanced choice, independent of row order. */
+function stableVariantOrder(a: ModelInfo, b: ModelInfo): number {
+  const order = ["medium", "high", "low", "xhigh", "max", "thinking", undefined];
+  return order.indexOf(a.effort) - order.indexOf(b.effort) || a.id.localeCompare(b.id);
+}
 
 /** A model name to pass agy, and the `--effort` to send with it, if any. */
 export interface TierPick {
@@ -124,27 +148,38 @@ export interface TierPick {
 /**
  * Reconciles a requested effort with a model that may carry its own tier.
  *
- * agy 1.2.1 rejects `--effort` for any model whose name carries a tier
- * ("Gemini 3.8 Flash (High)"), and rejects an id whose tier disagrees with
- * `--effort`. So for a tiered model the tier *is* the effort: a different
- * effort selects the sibling at that tier when one is listed, and `--effort`
- * itself only travels with models that have no tier of their own.
+ * The listed variant is the executable identity. A family policy may choose
+ * a sibling at another effort, but only if that sibling is actually listed.
+ * Callers must reject a conflicting effort on an explicit fixed variant before
+ * calling this helper. Opaque models do not imply support for arbitrary effort.
  */
 export function pickTier(
   name: string,
   effort: Effort | undefined,
   available: ModelInfo[],
 ): TierPick {
-  const info = available.find((m) => m.name === name);
-  if (!info || !info.effort) return effort ? { model: name, effort } : { model: name };
-  if (!effort || effort === info.effort) return { model: name };
-  const sibling = available.find(
-    (m) =>
-      m.family === info.family &&
-      m.version.join(".") === info.version.join(".") &&
-      m.effort === effort,
+  const exactId = available.find((m) => m.id === name);
+  const labels = exactId ? [] : available.filter((m) => m.name === name);
+  const info = exactId ?? (labels.length === 1 ? labels[0] : undefined);
+  if (!info) throw new Error(`Model "${name}" is not in the current agy inventory.`);
+  if (!effort || effort === info.effort) return { model: info.id };
+  const sibling = available
+    .filter(
+      (m) =>
+        m.family === info.family &&
+        m.version.join(".") === info.version.join(".") &&
+        m.effort === effort,
+    )
+    .sort(stableVariantOrder)[0];
+  if (sibling) return { model: sibling.id };
+  const offered = available
+    .filter((m) => m.family === info.family && m.version.join(".") === info.version.join("."))
+    .map((m) => m.effort)
+    .filter((v): v is string => v !== undefined);
+  throw new Error(
+    `Model "${info.name}" does not offer effort "${effort}". ` +
+      `Available efforts: ${[...new Set(offered)].join(", ") || "fixed; omit effort"}.`,
   );
-  return { model: sibling?.name ?? name };
 }
 
 export interface ResolveOptions {
@@ -174,47 +209,66 @@ export class ModelSkewError extends Error {
 export class ModelRegistry {
   private listing: ModelInfo[] | null = null;
   private pending: Promise<ModelInfo[] | null> | null = null;
+  private generation = 0;
+  private freshUntil = 0;
 
-  constructor(private fetchListing: () => Promise<string>) {}
+  constructor(
+    private fetchListing: () => Promise<string>,
+    private readonly cache: { ttlMs?: number; now?: () => number } = {},
+  ) {}
 
   /**
    * Discards the cached listing so the next call re-reads `agy models`.
    *
-   * The listing is cached for the process lifetime, which is right until agy is
-   * upgraded underneath a long-running bridge and renames a model. Every
-   * resolve then produces a name agy rejects, and `invalid_model` does not fail
-   * over, so the server used to stay bricked until someone restarted it.
+   * Listings otherwise expire after five minutes. Invalidation also prevents
+   * an older in-flight fetch from replacing a newer account inventory.
    */
   invalidate(): void {
     this.listing = null;
     this.pending = null;
+    this.freshUntil = 0;
+    this.generation++;
   }
 
   async available(): Promise<ModelInfo[] | null> {
-    if (this.listing) return this.listing;
+    const now = this.cache.now ?? Date.now;
+    if (this.listing && now() < this.freshUntil) return this.listing;
     // Cache the promise so concurrent first calls share one fetch.
     this.pending ??= this.fetchListing()
       .then(parseListing)
       .catch(() => null);
-    const result = await this.pending;
-    if (result && result.length) this.listing = result;
-    else this.pending = null; // transient failure — retry on the next call
+    const pending = this.pending;
+    const generation = this.generation;
+    const result = await pending;
+    // A listing requested before invalidation must not overwrite the fresh one.
+    if (generation !== this.generation) return this.available();
+    if (this.pending === pending) this.pending = null;
+    if (result && result.length) {
+      this.listing = result;
+      this.freshUntil = now() + (this.cache.ttlMs ?? 300_000);
+    } else {
+      this.listing = null;
+    }
     return result && result.length ? result : null;
   }
 
-  /** `pickTier` against the live listing; passes the effort through when the listing is unreadable. */
+  /** Verify effort against the inventory; never invent a tier during an outage. */
   async forEffort(
     name: string | undefined,
     effort: Effort | undefined,
   ): Promise<TierPick | undefined> {
     if (!name) return undefined;
     const available = await this.available();
-    if (available === null) return effort ? { model: name, effort } : { model: name };
+    if (available === null) {
+      if (effort)
+        throw new Error("Cannot verify the requested effort because `agy models` is unavailable.");
+      return { model: name };
+    }
     return pickTier(name, effort, available);
   }
 
   /**
-   * Every viable model in preference order so callers can fail over.
+   * Every viable model in preference order for selection before dispatch.
    * `[undefined]` means "let agy pick", and is only returned when the listing
    * itself could not be read — an unreadable listing is a degraded environment,
    * whereas an empty resolved chain is stale configuration and throws.

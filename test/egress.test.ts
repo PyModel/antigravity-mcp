@@ -121,4 +121,29 @@ describe("redaction coverage (SEC-M3)", () => {
     expect(JSON.stringify(r.value)).not.toContain("AKIAIOSFODNN7EXAMPLE");
     expect(r.count).toBe(1);
   });
+
+  it("scrubs secret-shaped JSON keys without losing colliding fields", () => {
+    const first = "sk-inertFirstMarker0000000000000000";
+    const second = "sk-inertSecondMarker000000000000000";
+    const result = redactDeep({
+      nested: {
+        [first]: "first field",
+        [second]: "second field",
+        "[redacted openai key]": "existing field",
+        "[redacted openai key] [redacted field 1]": "existing suffixed field",
+      },
+    });
+    const safe = result.value as { nested: Record<string, string> };
+    expect(JSON.stringify(safe)).not.toContain(first);
+    expect(JSON.stringify(safe)).not.toContain(second);
+    expect(Object.values(safe.nested).sort()).toEqual([
+      "existing field",
+      "existing suffixed field",
+      "first field",
+      "second field",
+    ]);
+    expect(safe.nested["[redacted openai key]"]).toBe("existing field");
+    expect(safe.nested["[redacted openai key] [redacted field 1]"]).toBe("existing suffixed field");
+    expect(result.count).toBe(2);
+  });
 });

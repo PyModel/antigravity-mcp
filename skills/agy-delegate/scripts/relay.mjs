@@ -22,10 +22,9 @@
  * after it reviews the diff and re-runs the project gates.
  *
  * Headless --print cannot answer a permission prompt, so this helper passes
- * --dangerously-skip-permissions by default (the human standing-authorized it on
- * 2026-09-11 so agy can do web research and shell work unattended). Pass
- * --no-dangerously-skip-permissions to let agy auto-deny instead. --read-only
- * (plan mode) still applies on top and is the way to keep a run from writing.
+ * --dangerously-skip-permissions by default. Use it only for an authorized task.
+ * Pass --no-dangerously-skip-permissions to let agy auto-deny instead. --read-only
+ * requests plan mode and watches the supplied roots; it does not prevent writes.
  * Pass --sandbox to enable Antigravity's terminal sandbox. Do not treat --sandbox
  * as an enforced boundary while the bypass is on; treat the run as full access.
  *
@@ -37,16 +36,18 @@
  *   --brief <file>          Path to the brief. If omitted, the brief is read from stdin.
  *   --cd <dir>              Working root for Antigravity (default: current directory).
  *   --lane <name>           Fleet lane from delegate-setup config (dials apply; explicit flags win).
- *   --model <name>          Antigravity model label (default: agy's configured default).
- *   --effort <level>        Reasoning effort: low, medium, or high (passed as agy's own --effort).
+ *   --model <name>          Listed CLI ID/label or family selector (default: agy's configured default).
+ *   --effort <level>        low, medium, high, xhigh, or max; only listed variants are usable.
+ *                           Requires --model. An exact ID/label fixes its effort; selectors
+ *                           such as gemini-neon@latest may select a listed effort sibling.
  *   --project <id>          Use an existing Antigravity project.
  *   --new-project           Force a fresh Antigravity project (default for fresh runs).
  *   --resume-last           Continue the most recent Antigravity conversation; send only the delta brief.
  *   --conversation <id>     Continue a specific Antigravity conversation; send only the delta brief.
  *   --sandbox               Enable Antigravity's terminal sandbox for this run.
- *   --read-only             Run in plan mode (`--mode plan`), removing write and edit paths.
- *                           Combines with the permission bypass: reads, searches and web
- *                           fetches are auto-approved, writes are still refused by plan mode.
+ *   --read-only             Request plan mode (`--mode plan`) and watch all supplied roots.
+ *                           Advisory only: no sandbox or write enforcement is provided.
+ *                           A write is a violation; unknown snapshot coverage is incomplete.
  *   --dangerously-skip-permissions
  *                           Auto-approve Antigravity tool permission requests (default: on).
  *   --no-dangerously-skip-permissions
@@ -57,45 +58,48 @@
  *                           result.json gets status "timeout". Set it explicitly when agy
  *                           may hang past its own print timeout.
  *   --add-dir <dir>         Add an extra workspace directory. Repeatable.
- *   --out-dir <dir>         Where to write run artifacts (default: a fresh dir under
- *                           the system temp dir, so the repo under review stays clean).
+ *   --out-dir <dir>         Artifact directory (default: a fresh system temp directory).
+ *                           Reuse clears old captures and publishes a new running result;
+ *                           concurrent reuse is refused. Other files are left intact.
  *   -h, --help              Show this help.
  *
  * Result: written to <out-dir>/result.json and summarized on stdout -
- *   status, exitCode, agyVersion, projectId, conversationId, finalMessage
- *   (Antigravity's own report), touchedFiles (git porcelain, null if git can't report),
- *   readOnlyViolation (on --read-only), and the paths to brief.txt, final.txt, agy.log, and stderr.txt.
+ *   runId, status, exitCode, agyVersion, projectId, conversationId, finalMessage,
+ *   requested/resolved/observed model facts, finishedReason, touchedFilesByRoot,
+ *   readOnlyViolation, snapshotCoverage, and paths to the captured artifacts.
  *
  * Exit codes: a pre-run usage error (bad/missing args, empty brief) exits 2
  * before any run and writes no result file; a missing `agy` binary exits 127;
- * otherwise the exit code mirrors Antigravity's own, except that an exit-zero
- * permission denial or silent write-dispatch no-op is forced to exit 1.
+ * otherwise a partial result, permission denial, read-only violation, or unknown
+ * read-only coverage exits nonzero even when Antigravity exits zero.
  * If the child dies on a signal, the exit code is 128 plus the signal number and
  * `result.json` records the signal.
  * Once the brief validates, `result.json` is written on every outcome -
- * completed, failed, timeout (the relay watchdog fired after explicit --timeout,
+ * running, completed, incomplete, read_only_violation, failed, timeout (the relay watchdog fired after explicit --timeout,
  * or after --print-timeout plus 60s grace), aborted (the relay itself was killed
  * and forwarded the kill to agy), or agy_unavailable. An orchestrator that polls for the
  * file must therefore also treat a non-zero exit with no file as a usage error.
  */
 
 import { spawn, execFileSync, spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import {
   mkdirSync,
   writeFileSync,
   renameSync,
   readFileSync,
-  readlinkSync,
-  lstatSync,
   existsSync,
   appendFileSync,
+  mkdtempSync,
   realpathSync,
+  rmSync,
 } from "node:fs";
-import { join, resolve, basename, dirname, relative, isAbsolute } from "node:path";
+import { join, resolve, basename, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { constants, tmpdir } from "node:os";
 import { StringDecoder } from "node:string_decoder";
+import { EFFORTS, selectModel } from "./model-selection.mjs";
+import { workspaceRoots, workspaceSnapshot, touchedFilesByRoot } from "./workspace.mjs";
 
 const DEFAULT_PRINT_TIMEOUT = "30m";
 const MAX_TIMER_MS = 2_147_483_647;
@@ -178,7 +182,7 @@ function parseArgs(argv) {
     const arg = argv[i];
     const next = () => {
       const value = argv[i + 1];
-      if (value === undefined) fail(`${arg} requires a value`);
+      if (!value?.trim() || value.startsWith("--")) fail(`${arg} requires a value`);
       i += 1;
       return value;
     };
@@ -251,9 +255,12 @@ function parseArgs(argv) {
     }
   }
   applyFleetLane(opts, flagged);
-  if (opts.effort !== null && !["low", "medium", "high"].includes(opts.effort)) {
-    fail(`invalid --effort "${opts.effort}" (expected: low, medium, high)`);
+  if (opts.effort !== null && !EFFORTS.includes(opts.effort)) {
+    fail(
+      `invalid --effort "${opts.effort}" (expected: ${EFFORTS.join(", ")}; must be listed for the model)`,
+    );
   }
+  if (opts.effort && !opts.model) fail("--effort requires --model; the inherited model is unknown");
   if (opts.resumeLast && opts.conversation) {
     fail("--resume-last and --conversation are mutually exclusive; pass only one");
   }
@@ -372,154 +379,47 @@ function parseDuration(duration) {
   }
 }
 
-function gitTouchedFiles(cwd) {
-  try {
-    const output = execFileSync("git", ["status", "--porcelain"], {
-      cwd,
-      encoding: "utf8",
-      timeout: 10_000,
-      killSignal: "SIGKILL",
-      stdio: ["ignore", "pipe", "ignore"],
-      maxBuffer: 64 * 1024 * 1024,
-    });
-    return output
-      .split("\n")
-      .map((line) => line.trimEnd())
-      .filter(Boolean);
-  } catch {
-    return null;
-  }
-}
-
-function gitWorktreeFingerprint(cwd, excludedPaths = []) {
-  try {
-    const git = (args) =>
-      execFileSync("git", args, {
-        cwd,
-        timeout: 10_000,
-        killSignal: "SIGKILL",
-        stdio: ["ignore", "pipe", "ignore"],
-        maxBuffer: 64 * 1024 * 1024,
-      });
-    const root = realpathSync.native(
-      git(["rev-parse", "--show-toplevel"])
-        .toString("utf8")
-        .replace(/\r?\n$/, ""),
-    );
-    const exclusions = excludedPaths
-      .map((path) => {
-        const absolute = resolve(path);
-        try {
-          return relative(root, realpathSync.native(absolute));
-        } catch {
-          return relative(root, join(realpathSync.native(dirname(absolute)), basename(absolute)));
-        }
-      })
-      .filter(
-        (path) =>
-          path &&
-          path !== ".." &&
-          !path.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) &&
-          !isAbsolute(path),
-      )
-      .map((path) => `:(exclude,top,literal)${path.replaceAll("\\", "/")}`);
-    const pathspec = [":(top)", ...exclusions];
-    const status = git([
-      "status",
-      "--porcelain=v1",
-      "-z",
-      "--untracked-files=all",
-      "--no-renames",
-      "--",
-      ...pathspec,
-    ]);
-    const fingerprint = createHash("sha256").update("status\0").update(status);
-    fingerprint
-      .update("\0index\0")
-      .update(
-        git(["diff", "--cached", "--raw", "--full-index", "--no-renames", "-z", "--", ...pathspec]),
-      );
-    fingerprint
-      .update("\0worktree\0")
-      .update(git(["diff", "--raw", "--full-index", "--no-renames", "-z", "--", ...pathspec]));
-
-    const paths = [
-      ...new Set(
-        status
-          .toString("utf8")
-          .split("\0")
-          .filter(Boolean)
-          .map((entry) => entry.slice(3)),
-      ),
-    ].sort();
-    for (const path of paths) {
-      const fullPath = join(cwd, path);
-      fingerprint.update("\0path\0").update(path).update("\0");
-      let stat;
-      try {
-        stat = lstatSync(fullPath);
-      } catch (error) {
-        if (error?.code !== "ENOENT") throw error;
-        fingerprint.update("missing");
-        continue;
-      }
-      fingerprint.update(String(stat.mode)).update("\0");
-      if (stat.isSymbolicLink()) fingerprint.update(readlinkSync(fullPath));
-      else if (stat.isFile()) fingerprint.update(git(["hash-object", "--no-filters", "--", path]));
-      else if (stat.isDirectory()) {
-        const nestedState = gitWorktreeFingerprint(fullPath, excludedPaths);
-        if (nestedState === null) return null;
-        let headState;
-        try {
-          headState = git(["-C", fullPath, "rev-parse", "--verify", "HEAD"]);
-        } catch {
-          const symbolicHead = git(["-C", fullPath, "symbolic-ref", "--quiet", "HEAD"])
-            .toString("utf8")
-            .trim();
-          const target = spawnSync(
-            "git",
-            ["-C", fullPath, "show-ref", "--verify", "--quiet", symbolicHead],
-            { cwd, timeout: 10_000, killSignal: "SIGKILL", stdio: "ignore" },
-          );
-          if (target.status !== 1) return null;
-          headState = Buffer.from(`unborn\0${symbolicHead}`);
-        }
-        fingerprint.update("submodule\0").update(headState).update(nestedState);
-      } else return null;
-    }
-    return fingerprint.digest("hex");
-  } catch {
-    return null;
-  }
-}
-
-function readOnlyVerdict(opts, beforeState, afterState) {
-  // Three-valued on purpose: true when fingerprints prove a change, false when coverage
-  // is complete and proves none, null when the fingerprint could not be taken or the run
-  // was not read-only.
-  if (!opts.readOnly) return null;
-  if (beforeState === null || afterState === null) return null;
-  return beforeState !== afterState;
-}
-
-function timestamp() {
-  return new Date().toISOString().replace(/[:.]/g, "-");
+function readOnlyVerdict(opts, before, after) {
+  if (!opts.readOnly || before.digest === null || after.digest === null) return null;
+  return before.digest !== after.digest;
 }
 
 function prepareRunDir(opts, brief) {
-  const startedAt = new Date().toISOString();
-  const outDir =
-    opts.outDir ||
-    join(tmpdir(), "delegate-relay", `${basename(opts.cd) || "repo"}-${timestamp()}`);
-  mkdirSync(outDir, { recursive: true });
+  let outDir = opts.outDir;
+  if (!outDir) {
+    const parent = join(tmpdir(), "delegate-relay");
+    mkdirSync(parent, { recursive: true });
+    outDir = mkdtempSync(join(parent, `${basename(opts.cd) || "repo"}-`));
+  } else {
+    mkdirSync(outDir, { recursive: true });
+  }
+  outDir = realpathSync.native(outDir);
+  const lockPath = join(outDir, ".relay-lock");
+  try {
+    mkdirSync(lockPath);
+  } catch (error) {
+    if (error.code === "EEXIST")
+      fail(`out-dir is locked: ${outDir}; inspect its active run before reuse`);
+    throw error;
+  }
+  process.once("exit", () => rmSync(lockPath, { recursive: true, force: true }));
   const run = {
-    startedAt,
+    runId: randomUUID(),
+    startedAt: new Date().toISOString(),
+    lockPath,
     briefPath: join(outDir, "brief.txt"),
     finalPath: join(outDir, "final.txt"),
+    stdoutPath: join(outDir, "stdout.txt"),
     logPath: join(outDir, "agy.log"),
     stderrPath: join(outDir, "stderr.txt"),
     resultPath: join(outDir, "result.json"),
   };
+  // Replace prior completion before any metadata probe or model dispatch. A
+  // watcher can associate every capture with this runId instead of stale output.
+  makeResultWriter(opts, null, run)({ status: "running", exitCode: null, finalMessage: "" });
+  for (const file of [run.briefPath, run.finalPath, run.stdoutPath, run.logPath, run.stderrPath]) {
+    rmSync(file, { force: true });
+  }
   writeFileSync(run.briefPath, brief, "utf8");
   writeFileSync(run.stderrPath, "", "utf8");
   return run;
@@ -537,16 +437,14 @@ function buildArgv(opts, brief, run) {
     argv.push("--new-project");
   }
 
-  if (!opts.resumeLast && !opts.conversation) {
-    // The disposable smoke showed that relying on cwd alone can produce a false
-    // "I created the file" response, so pin the workspace explicitly. agy requires
-    // an absolute path here (it rejects "." as non-absolute); opts.cd is already
-    // resolve()d, and an argv-array element carries spaces fine without a shell.
-    argv.push("--add-dir", opts.cd);
-    for (const dir of opts.addDirs) argv.push("--add-dir", dir);
-  }
-  if (opts.model) argv.push("--model", opts.model);
-  if (opts.effort) argv.push("--effort", opts.effort);
+  // Keep explicit roots on continuations too. Older conversation state does not
+  // replace the caller's current workspace request.
+  argv.push("--add-dir", opts.cd);
+  for (const dir of opts.addDirs) argv.push("--add-dir", dir);
+  if (opts.selection?.model) argv.push("--model", opts.selection.model);
+  // Listed effort variants are complete CLI IDs; never invent an ID or combine
+  // a fixed variant with an independent --effort that can contradict it.
+  argv.push("--output-format", "json");
   if (opts.readOnly) argv.push("--mode", "plan");
   if (opts.sandbox) argv.push("--sandbox");
   if (opts.dangerouslySkipPermissions) argv.push("--dangerously-skip-permissions");
@@ -586,35 +484,53 @@ function parseIdsFromLog(logPath) {
 
 function makeResultWriter(opts, version, run) {
   return (extra) => {
-    const ids = parseIdsFromLog(run.logPath);
+    const running = extra.status === "running";
+    const ids = running ? { projectId: null, conversationId: null } : parseIdsFromLog(run.logPath);
     const result = {
-      schema: "delegate-relay.result.v1",
+      schema: "delegate-relay.result.v2",
+      runId: run.runId,
       lane: opts.lane,
       laneSource: opts.laneSource,
       tool: "agy",
       workdir: opts.cd,
-      model: opts.model,
-      effort: opts.effort,
+      requestedModel: opts.model,
+      requestedEffort: opts.effort,
+      resolvedModel: opts.selection?.model ?? null,
+      resolvedEffort: opts.selection?.effort ?? null,
+      observedModel: null,
+      // Compatibility fields identify the dispatched selection, not model observation.
+      model: opts.selection?.model ?? null,
+      effort: opts.selection?.effort ?? null,
       project: opts.project,
       sandbox: opts.sandbox,
       readOnly: opts.readOnly,
+      readOnlyEnforced: false,
       readOnlyViolation: null,
+      snapshotCoverage: null,
       dangerouslySkipPermissions: opts.dangerouslySkipPermissions,
-      resumed: Boolean(opts.resumeLast || opts.conversation),
+      resumeRequested: Boolean(opts.resumeLast || opts.conversation),
+      requestedConversationId: opts.conversation,
+      resumed: opts.resumeLast || opts.conversation ? null : false,
       agyVersion: version,
       projectId: ids.projectId,
       conversationId: ids.conversationId,
       startedAt: run.startedAt,
-      finishedAt: new Date().toISOString(),
+      finishedAt: running ? null : new Date().toISOString(),
       briefPath: run.briefPath,
-      finalPath: existsSync(run.finalPath) ? run.finalPath : null,
-      logPath: existsSync(run.logPath) ? run.logPath : null,
+      finalPath: !running && existsSync(run.finalPath) ? run.finalPath : null,
+      stdoutPath: !running && existsSync(run.stdoutPath) ? run.stdoutPath : null,
+      logPath: !running && existsSync(run.logPath) ? run.logPath : null,
       stderrPath: run.stderrPath,
+      touchedFiles: null,
+      touchedFilesByRoot: [],
       ...extra,
     };
+    if (opts.conversation && result.conversationId) {
+      result.resumed = opts.conversation === result.conversationId;
+    }
     // Publish atomically so a polling orchestrator never reads a half-written file
     // (same idiom as claude-delegate's writeJsonAtomic and qoder-delegate).
-    const temporary = `${run.resultPath}.${process.pid}.tmp`;
+    const temporary = join(run.lockPath, "result.tmp");
     writeFileSync(temporary, `${JSON.stringify(result, null, 2)}\n`, "utf8");
     renameSync(temporary, run.resultPath);
     return result;
@@ -654,186 +570,222 @@ function reportVersionTimeout(writeResult, run, timeoutMs, error) {
   process.exit(result.exitCode);
 }
 
+function parseTerminalEnvelope(stdout) {
+  const shape = (value) => {
+    if (!value || typeof value !== "object") return null;
+    const result = value.event === "result" ? value.result : value;
+    return result && typeof result.status === "string" ? result : null;
+  };
+  // Accept a pretty-printed object as well as the final compact JSON/NDJSON line.
+  try {
+    const value = shape(JSON.parse(stdout));
+    if (value) return value;
+  } catch {
+    /* A CLI startup diagnostic may precede the envelope. */
+  }
+  for (const line of stdout.split("\n").reverse()) {
+    try {
+      const value = shape(JSON.parse(line));
+      if (value) return value;
+    } catch {
+      /* Skip non-JSON diagnostic lines. */
+    }
+  }
+  return null;
+}
+
 function dispatchToAgy(opts, brief, run, writeResult, watchdogMs) {
   const relayArtifacts = [
+    run.lockPath,
     run.briefPath,
     run.finalPath,
+    run.stdoutPath,
     run.logPath,
     run.stderrPath,
     run.resultPath,
   ];
-  const beforeState = gitWorktreeFingerprint(opts.cd, relayArtifacts);
-  const argv = buildArgv(opts, brief, run);
-  // Antigravity's installer provides a native `agy` binary. Launch directly so
-  // multi-line briefs and paths with spaces are passed as argv, not shell text.
-  const child = spawn("agy", argv, {
+  const snapshot = () =>
+    opts.readOnly
+      ? workspaceSnapshot(opts.roots, relayArtifacts)
+      : { digest: null, roots: opts.roots, reason: "read-only snapshot not requested" };
+  const before = snapshot();
+  const child = spawn("agy", buildArgv(opts, brief, run), {
     cwd: opts.cd,
     env: { ...process.env, PWD: opts.cd },
     stdio: ["ignore", "pipe", "pipe"],
-    detached: process.platform !== "win32", // POSIX: lead a new process group so killChild can fell the whole tree
+    detached: process.platform !== "win32",
   });
-
   let stdout = "";
-  const stderrTail = [];
   let settled = false;
-  let watchdogFired = false;
+  let termination = null;
   let sigkillTimer = null;
-  const watchdogTimer = setTimeout(() => {
-    watchdogFired = true;
+  const stdoutDecoder = new StringDecoder("utf8");
+  const watchdogTimer = setTimeout(() => stop("timeout", "SIGTERM"), watchdogMs);
+
+  function stop(kind, signal) {
+    if (settled) return;
+    if (termination) {
+      killChild(child, "SIGKILL");
+      return;
+    }
+    termination = { kind, signal };
+    clearTimeout(watchdogTimer);
+    // A descendant holding stdout open must not prevent the parent's close event.
     child.once("exit", () => {
       child.stdout.destroy();
       child.stderr.destroy();
     });
     killChild(child);
     sigkillTimer = setTimeout(() => {
-      if (!settled) killChild(child, "SIGKILL");
-    }, 10_000);
-  }, watchdogMs);
-
-  // The relay's own death must still produce a result: without this, a kill from the
-  // orchestrator's side (its command timeout, a stopped task, a closed terminal) writes
-  // no result.json and leaves the agy child running or dying mid-edit with nothing
-  // recording why. SIGTERM/SIGHUP registration is a no-op on Windows; SIGINT works there.
-  for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"]) {
-    process.on(sig, () => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(watchdogTimer);
-      if (sigkillTimer) clearTimeout(sigkillTimer);
-      const finalMessage = stdout.trim();
-      if (finalMessage) writeFileSync(run.finalPath, finalMessage, "utf8");
-      const abortedFields = {
-        status: "aborted",
-        exitCode: 128 + (constants.signals[sig] || 15),
-        signal: sig,
-        finalMessage,
-        stderrTail: stderrTail.slice(-20),
-        error: `the relay was killed by ${sig}; agy was terminated with it — inspect the working tree before re-dispatching`,
-      };
-      let finalized = false;
-      const finalizeAbort = () => {
-        if (finalized) return;
-        finalized = true;
-        if (sigkillTimer) clearTimeout(sigkillTimer);
-        const afterState = gitWorktreeFingerprint(opts.cd, relayArtifacts);
-        const result = writeResult({
-          ...abortedFields,
-          touchedFiles: gitTouchedFiles(opts.cd),
-          readOnlyViolation: readOnlyVerdict(opts, beforeState, afterState),
-        });
-        printSummary(result, run.resultPath);
-        process.exit(result.exitCode);
-      };
-      child.once("close", finalizeAbort);
-      killChild(child);
-      sigkillTimer = setTimeout(() => {
-        killChild(child, "SIGKILL");
-      }, 2000);
-    });
+      killChild(child, "SIGKILL");
+      child.stdout.destroy();
+      child.stderr.destroy();
+    }, 2000);
   }
 
-  // Decode across chunk boundaries: a multibyte UTF-8 character split between
-  // two data events would otherwise decode as U+FFFD and corrupt the report.
-  const stdoutDecoder = new StringDecoder("utf8");
-  const stderrDecoder = new StringDecoder("utf8");
-
+  for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"]) {
+    process.on(signal, () => stop("aborted", signal));
+  }
   child.stdout.on("data", (chunk) => {
     stdout += stdoutDecoder.write(chunk);
   });
-
   child.stderr.on("data", (chunk) => {
     process.stderr.write(chunk);
     appendFileSync(run.stderrPath, chunk);
-    const text = stderrDecoder.write(chunk);
-    for (const line of text.split("\n")) {
-      if (line.trim()) stderrTail.push(line.trimEnd());
-    }
-    while (stderrTail.length > 20) stderrTail.shift();
   });
 
-  child.on("error", (err) => {
+  function finish(code, signal, spawnError = null) {
     if (settled) return;
     settled = true;
     clearTimeout(watchdogTimer);
     if (sigkillTimer) clearTimeout(sigkillTimer);
-    const finalMessage = stdout.trim();
+    // Always sweep the group after an abort or timeout, even if the leader exited
+    // promptly. Its descendants may have ignored TERM and detached their pipes.
+    if (termination) killChild(child, "SIGKILL");
+    stdout += stdoutDecoder.end();
+    writeFileSync(run.stdoutPath, stdout, "utf8");
+    const envelope = parseTerminalEnvelope(stdout);
+    const finalMessage = envelope
+      ? typeof envelope.response === "string"
+        ? envelope.response.trim()
+        : ""
+      : stdout.trim();
     if (finalMessage) writeFileSync(run.finalPath, finalMessage, "utf8");
-    const afterState = gitWorktreeFingerprint(opts.cd, relayArtifacts);
-    const readOnlyViolation = readOnlyVerdict(opts, beforeState, afterState);
-    const result = writeResult({
-      status: "failed",
-      exitCode: 1,
-      signal: null,
-      finalMessage,
-      touchedFiles: gitTouchedFiles(opts.cd),
-      readOnlyViolation,
-      error: String(err && err.message ? err.message : err),
-    });
-    printSummary(result, run.resultPath);
-    process.exit(1);
-  });
-
-  child.on("close", (code, signal) => {
-    if (settled) return;
-    settled = true;
-    clearTimeout(watchdogTimer);
-    if (sigkillTimer) clearTimeout(sigkillTimer);
-    // a descendant that ignored SIGTERM must not outlive the timeout report: once the
-    // parent is down, sweep the group (no-op where taskkill already felled the tree)
-    if (watchdogFired) killChild(child, "SIGKILL");
-    const finalMessage = stdout.trim();
-    if (finalMessage) writeFileSync(run.finalPath, finalMessage, "utf8");
-    const touchedFiles = gitTouchedFiles(opts.cd);
+    const after = snapshot();
+    const readOnlyViolation = readOnlyVerdict(opts, before, after);
+    const snapshotCoverage = opts.readOnly
+      ? {
+          roots: opts.roots,
+          complete: before.digest !== null && after.digest !== null,
+          beforeError: before.reason,
+          afterError: after.reason,
+          excludes: "relay artifacts and Git administrative files; Git HEAD and index are included",
+        }
+      : null;
+    const touched = touchedFilesByRoot(opts.roots);
+    const finishedReason =
+      typeof envelope?.finished_reason === "string" ? envelope.finished_reason : null;
+    const deniedActions = Array.isArray(envelope?.denied_actions) ? envelope.denied_actions : [];
+    const conversationId =
+      typeof envelope?.conversation_id === "string" && envelope.conversation_id
+        ? envelope.conversation_id
+        : parseIdsFromLog(run.logPath).conversationId;
+    const observedModel =
+      typeof envelope?.model_id === "string"
+        ? envelope.model_id
+        : typeof envelope?.model === "string"
+          ? envelope.model
+          : null;
     const stderr = readFileSync(run.stderrPath, "utf8");
-    const diagnostics = stderr
-      .split("\n")
-      .map((line) => line.trimEnd())
-      .filter(Boolean)
-      .slice(-20);
     const permissionDenied =
-      /no output produced\s+[—-]\s+a tool required the "([^"]+)" permission that headless\s+mode cannot prompt for, so it was auto-denied/i.exec(
-        stderr,
-      );
-    // A clean read-only run still owes the caller a plan. With neither a final message
-    // nor observable worktree changes, exit 0 cannot confirm any dispatch completed.
-    const afterState = gitWorktreeFingerprint(opts.cd, relayArtifacts);
-    const worktreeChanged =
-      beforeState !== null && afterState !== null && beforeState !== afterState;
-    const readOnlyViolation = readOnlyVerdict(opts, beforeState, afterState);
-    const silentNoop = code === 0 && !finalMessage && !worktreeChanged;
-    // A timed-out run is failed even if agy handles SIGTERM by exiting 0 -
-    // orchestrators key off status and the relay exit code.
-    const succeeded = code === 0 && !watchdogFired && !permissionDenied && !silentNoop;
-    const mapped = code ?? (constants.signals[signal] ? 128 + constants.signals[signal] : 1);
+      deniedActions.length > 0 ||
+      /no output produced\s+[—-]\s+a tool required.+permission.+auto-denied/is.test(stderr);
+    const resumeUnknown = opts.conversation && !conversationId;
+    const resumeMismatch =
+      opts.conversation && conversationId && opts.conversation !== conversationId;
+    let status = "completed";
+    let exitCode = code ?? (constants.signals[signal] ? 128 + constants.signals[signal] : 1);
+    let error = null;
+    if (termination?.kind === "aborted") {
+      status = "aborted";
+      signal = termination.signal;
+      exitCode = 128 + (constants.signals[signal] || 15);
+      error = `the relay was stopped by ${signal}; its agy process group was terminated; inspect the roots before re-dispatching`;
+    } else if (termination?.kind === "timeout" || finishedReason === "print_timeout") {
+      status = "timeout";
+      exitCode = 124;
+      error =
+        finishedReason === "print_timeout"
+          ? "agy reported print_timeout; the response is incomplete"
+          : `agy exceeded the relay watchdog (${opts.timeout || `${opts.printTimeout} plus 60s grace`})`;
+    } else if (finishedReason === "interrupted") {
+      status = "aborted";
+      exitCode = exitCode || 130;
+      error = "agy reported an interrupted turn; inspect the roots before resuming";
+    } else if (
+      spawnError ||
+      code !== 0 ||
+      envelope?.status === "ERROR" ||
+      finishedReason === "error"
+    ) {
+      status = "failed";
+      exitCode = exitCode || 1;
+      error = spawnError?.message || envelope?.error || "agy did not complete successfully";
+    } else if (readOnlyViolation === true) {
+      status = "read_only_violation";
+      exitCode = 1;
+      error =
+        "the watched roots changed during an advisory read-only run; inspect the changes before using its answer";
+    } else if (
+      !envelope ||
+      envelope.status !== "SUCCESS" ||
+      finishedReason ||
+      permissionDenied ||
+      !finalMessage ||
+      (opts.readOnly && !snapshotCoverage?.complete) ||
+      resumeUnknown ||
+      resumeMismatch
+    ) {
+      status = "incomplete";
+      exitCode = 1;
+      if (resumeMismatch)
+        error = `requested conversation ${opts.conversation} was not resumed; agy reported ${conversationId}`;
+      else if (resumeUnknown)
+        error = "agy did not report a conversation ID; the requested continuation is unverified";
+      else if (permissionDenied)
+        error = "agy denied one or more required actions; the task is incomplete";
+      else if (opts.readOnly && !snapshotCoverage?.complete)
+        error = `read-only coverage is unknown: ${before.reason || after.reason}`;
+      else if (finishedReason)
+        error = `agy ended with finished_reason=${finishedReason}; completion is unverified`;
+      else if (!envelope || envelope.status !== "SUCCESS")
+        error = "no successful structured CLI result was received; completion is unverified";
+      else error = "agy returned no final report; completion is unverified";
+    }
     const result = writeResult({
-      status: succeeded ? "completed" : watchdogFired ? "timeout" : "failed",
-      exitCode: succeeded ? 0 : mapped === 0 ? 1 : mapped,
+      status,
+      exitCode,
+      childExitCode: code,
       signal: signal ?? null,
       finalMessage,
-      touchedFiles,
+      cliStatus: envelope?.status ?? null,
+      finishedReason,
+      deniedActions,
+      observedModel,
+      conversationId,
+      usage: envelope?.usage ?? null,
+      modelUsage: envelope?.model_usage ?? null,
+      touchedFiles: touched[0]?.files ?? null,
+      touchedFilesByRoot: touched,
       readOnlyViolation,
-      ...(!succeeded || !finalMessage ? { stderrTail: diagnostics } : {}),
-      ...(watchdogFired
-        ? {
-            error:
-              opts.timeout !== null
-                ? `agy did not finish within --timeout ${opts.timeout}; killed by the relay watchdog`
-                : `agy did not exit within --print-timeout ${opts.printTimeout} plus 60s grace; killed by the relay watchdog`,
-          }
-        : permissionDenied
-          ? {
-              error: `Antigravity auto-denied the ${permissionDenied[1]} permission because headless --print cannot prompt; re-dispatch without --no-dangerously-skip-permissions and treat that run as full access`,
-            }
-          : silentNoop
-            ? {
-                error:
-                  "agy exited 0 without a final message or observable working-tree changes; the relay cannot confirm this dispatch completed",
-              }
-            : {}),
+      snapshotCoverage,
+      ...(error ? { error, stderrTail: stderr.trim().split("\n").filter(Boolean).slice(-20) } : {}),
     });
     printSummary(result, run.resultPath);
     process.exit(result.exitCode);
-  });
+  }
+  child.once("error", (error) => finish(null, null, error));
+  child.once("close", (code, signal) => finish(code, signal));
 }
 
 function main() {
@@ -871,7 +823,20 @@ function main() {
     reportUnavailable(writeResult, run.resultPath);
     return;
   }
-
+  try {
+    opts.selection = selectModel(opts, watchdogMs);
+    opts.roots = workspaceRoots([opts.cd, ...opts.addDirs]);
+  } catch (error) {
+    const result = writeResult({
+      status: "failed",
+      exitCode: 1,
+      signal: null,
+      finalMessage: "",
+      error: `preflight failed; no task was dispatched: ${error.message}`,
+    });
+    printSummary(result, run.resultPath);
+    process.exit(1);
+  }
   dispatchToAgy(opts, brief, run, writeResult, watchdogMs);
 }
 
@@ -880,6 +845,15 @@ function printSummary(result, resultPath) {
   lines.push("");
   lines.push(
     `relay: ${result.status} (exit ${result.exitCode}${result.signal ? `, killed by ${result.signal}` : ""})  ·  agy ${result.agyVersion ?? "?"}`,
+  );
+  if (result.error) lines.push(`error: ${result.error}`);
+  if (result.readOnly) {
+    lines.push("read-only: watched, not enforced by this relay");
+    if (result.readOnlyViolation === true) lines.push("READ-ONLY VIOLATION: watched roots changed");
+    else if (result.readOnlyViolation === null) lines.push("read-only coverage: unknown");
+  }
+  lines.push(
+    `model: requested=${result.requestedModel ?? "CLI default"}; resolved=${result.resolvedModel ?? "unknown"}; observed=${result.observedModel ?? "unknown"}`,
   );
   if (result.signal === "SIGKILL" && result.status === "failed")
     lines.push(
@@ -890,6 +864,8 @@ function printSummary(result, resultPath) {
       'hint: something outside the relay terminated agy (a supervisor, the session ending, or a manual kill) — when the relay itself does the killing it reports status "timeout" or "aborted" instead; inspect the working tree before re-dispatching.',
     );
   if (result.resumed) lines.push("mode: resumed an existing conversation");
+  else if (result.resumeRequested)
+    lines.push(`mode: continuation ${result.resumed === false ? "not resumed" : "unverified"}`);
   if (result.projectId) lines.push(`project id: ${result.projectId}`);
   if (result.conversationId)
     lines.push(
