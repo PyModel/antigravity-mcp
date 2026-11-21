@@ -194,7 +194,7 @@ With `claude-agy-mcp`:
 
 ## Requirements
 
-- Node.js 18+ runtime compatibility; Node.js 24 is recommended for development and deployments
+- Node.js 24 is recommended for development and deployments. Legacy Node.js 18 is smoke-tested for stdio with npm's default engine checks. The checked-in dependency graph includes an HTTP adapter requiring Node.js 20+, so Node.js 18 `engine-strict` installation of that graph is unsupported; fresh dependency resolution can differ.
 - [Antigravity CLI](https://antigravity.google/docs/install?tab=cli) (`agy`) installed and authenticated
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
 
