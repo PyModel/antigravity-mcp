@@ -28,6 +28,7 @@ import {
 import { LogTail } from "./logtail.js";
 import { detectQuota, QuotaError } from "./quota.js";
 import { redact } from "./egress.js";
+import { LEGACY_SERVER_NAME, SERVER_NAME } from "./identity.js";
 
 /** How much authority a single run is granted. */
 export type RunMode = "plan" | "accept-edits";
@@ -265,7 +266,8 @@ const spawnDetached: SpawnAgy = (file, args, opts) => {
   };
 };
 
-const LOG_DIR_PREFIX = "claude-agy-mcp-";
+const LOG_DIR_PREFIX = `${SERVER_NAME}-`;
+const LOG_DIR_PATTERN = new RegExp(`^(?:${SERVER_NAME}|${LEGACY_SERVER_NAME})-(\\d+)-`);
 let logDir: string | undefined;
 
 /**
@@ -295,7 +297,7 @@ export function sweepStaleLogs(dir: string = tmpdir()): void {
     return;
   }
   for (const name of names) {
-    const pid = new RegExp(`^${LOG_DIR_PREFIX}(\\d+)-`).exec(name)?.[1];
+    const pid = LOG_DIR_PATTERN.exec(name)?.[1];
     if (!pid || Number(pid) === process.pid || isRunning(Number(pid))) continue;
     const full = path.join(dir, name);
     try {
@@ -471,7 +473,7 @@ export function truncate(text: string, max: number): Truncation {
   const dropped = text.length - max;
   return {
     text:
-      `${text.slice(0, head)}\n\n[claude-agy-mcp: ${dropped} chars omitted here — output was ` +
+      `${text.slice(0, head)}\n\n[${SERVER_NAME}: ${dropped} chars omitted here — output was ` +
       `${text.length} chars, limit ${max}. Ask a narrower question or raise AGY_MAX_OUTPUT_CHARS. ` +
       `The end of the output follows.]\n\n${text.slice(-tail)}`,
     from: text.length,
@@ -484,7 +486,7 @@ export function clipPartialOutput(text: string, scrub = false): string {
   if (text.length <= MAX_PARTIAL_OUTPUT_CHARS) return text;
   const half = MAX_PARTIAL_OUTPUT_CHARS / 2;
   return (
-    `${text.slice(0, half)}\n\n[claude-agy-mcp: partial output clipped; ` +
+    `${text.slice(0, half)}\n\n[${SERVER_NAME}: partial output clipped; ` +
     `${text.length - MAX_PARTIAL_OUTPUT_CHARS} characters omitted.]\n\n${text.slice(-half)}`
   );
 }

@@ -1,267 +1,70 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 480" width="1280" height="480" role="img" aria-label="claude-agy-mcp: Claude Code delegates heavy coding to Gemini 3.8 Flash via the Antigravity CLI">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 500" width="1280" height="500" role="img" aria-labelledby="banner-title banner-description">
+  <title id="banner-title">Antigravity MCP — Gemini 4 Neon from your coding agent</title>
+  <desc id="banner-description">A bridge to the Antigravity CLI for research, code analysis, and implementation. Choose Pi, OpenCode, Codex, or Claude Code as your MCP client. The illustrated model selection is Gemini 4 Neon High; available models and effort tiers come from your agy account.</desc>
   <defs>
-    <!-- Background -->
-    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#06080d"/>
-      <stop offset="40%" stop-color="#0a0d16"/>
-      <stop offset="100%" stop-color="#0d111c"/>
+    <linearGradient id="banner-bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b1522"/>
+      <stop offset="1" stop-color="#0c1019"/>
     </linearGradient>
-
-    <!-- Ambient light: warm top-left (Claude side) -->
-    <radialGradient id="warmGlow" cx="15%" cy="0%" r="55%">
-      <stop offset="0%" stop-color="#d4a24a" stop-opacity="0.07"/>
-      <stop offset="100%" stop-color="#06080d" stop-opacity="0"/>
+    <linearGradient id="banner-accent" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#b5f7c9"/>
+      <stop offset="1" stop-color="#65dcd5"/>
+    </linearGradient>
+    <radialGradient id="banner-glow">
+      <stop offset="0" stop-color="#286d66" stop-opacity="0.2"/>
+      <stop offset="1" stop-color="#286d66" stop-opacity="0"/>
     </radialGradient>
-
-    <!-- Ambient light: Gemini blue bottom-right -->
-    <radialGradient id="geminiGlowBlue" cx="88%" cy="100%" r="55%">
-      <stop offset="0%" stop-color="#4E86F5" stop-opacity="0.06"/>
-      <stop offset="100%" stop-color="#06080d" stop-opacity="0"/>
-    </radialGradient>
-
-    <!-- Ambient light: Gemini red top-right -->
-    <radialGradient id="geminiGlowRed" cx="100%" cy="8%" r="40%">
-      <stop offset="0%" stop-color="#D96570" stop-opacity="0.045"/>
-      <stop offset="100%" stop-color="#06080d" stop-opacity="0"/>
-    </radialGradient>
-
-    <!-- Brand accent (Claude / bridge) -->
-    <linearGradient id="gold" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#f7c948"/>
-      <stop offset="100%" stop-color="#c07d32"/>
-    </linearGradient>
-
-    <!-- Gemini brand gradient: blue into violet into red -->
-    <linearGradient id="gemini" x1="0%" y1="0%" x2="100%" y2="0%">
-      <stop offset="0%" stop-color="#4E86F5"/>
-      <stop offset="55%" stop-color="#9B72CB"/>
-      <stop offset="100%" stop-color="#D96570"/>
-    </linearGradient>
-
-    <linearGradient id="geminiSoft" x1="0%" y1="0%" x2="100%" y2="0%">
-      <stop offset="0%" stop-color="#4E86F5" stop-opacity="0.55"/>
-      <stop offset="55%" stop-color="#9B72CB" stop-opacity="0.45"/>
-      <stop offset="100%" stop-color="#D96570" stop-opacity="0.55"/>
-    </linearGradient>
-
-    <!-- Terminal card -->
-    <linearGradient id="cardBg" x1="0%" y1="0%" x2="0%" y2="100%">
-      <stop offset="0%" stop-color="#111827"/>
-      <stop offset="100%" stop-color="#0b0f19"/>
-    </linearGradient>
-
-    <linearGradient id="cardBorder" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#2a3347" stop-opacity="0.7"/>
-      <stop offset="50%" stop-color="#1a2133" stop-opacity="0.3"/>
-      <stop offset="100%" stop-color="#2a3347" stop-opacity="0.5"/>
-    </linearGradient>
-
-    <!-- Title bar -->
-    <linearGradient id="titleBarBg" x1="0%" y1="0%" x2="0%" y2="100%">
-      <stop offset="0%" stop-color="#161c2d"/>
-      <stop offset="100%" stop-color="#111827"/>
-    </linearGradient>
-
-    <!-- Shadows -->
-    <filter id="cardDrop" x="-4%" y="-4%" width="108%" height="116%">
-      <feDropShadow dx="0" dy="12" stdDeviation="20" flood-color="#000" flood-opacity="0.55"/>
-    </filter>
-
-    <filter id="iconGlow" x="-30%" y="-30%" width="160%" height="160%">
-      <feGaussianBlur stdDeviation="6" result="b"/>
-      <feComposite in="SourceGraphic" in2="b" operator="over"/>
-    </filter>
-
-    <!-- Gemini sparkle (four-point star) -->
-    <path id="sparkle" d="M0 -7 C 1.4 -2 2 -1.4 7 0 C 2 1.4 1.4 2 0 7 C -1.4 2 -2 1.4 -7 0 C -2 -1.4 -1.4 -2 0 -7 Z"/>
+    <pattern id="banner-grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M 40 0 H 0 V 40" fill="none" stroke="#7ba5aa" stroke-opacity="0.05"/>
+    </pattern>
+    <clipPath id="banner-clip"><rect x="1" y="1" width="1278" height="498" rx="24"/></clipPath>
   </defs>
-
-  <!-- ===================== CANVAS ===================== -->
-  <rect width="1280" height="480" fill="url(#bg)"/>
-  <rect width="1280" height="480" fill="url(#warmGlow)"/>
-  <rect width="1280" height="480" fill="url(#geminiGlowBlue)"/>
-  <rect width="1280" height="480" fill="url(#geminiGlowRed)"/>
-
-  <!-- Faint horizontal rule accent -->
-  <line x1="80" y1="164" x2="1200" y2="164" stroke="#ffffff" stroke-opacity="0.04" stroke-width="0.5"/>
-
-  <!-- ===================== HEADER ===================== -->
-  <g transform="translate(80, 48)">
-    <!-- Bridge Icon -->
-    <g filter="url(#iconGlow)">
-      <rect x="0" y="6" width="5" height="30" rx="2.5" fill="url(#gold)"/>
-      <rect x="36" y="6" width="5" height="30" rx="2.5" fill="url(#gold)"/>
-      <path d="M2.5 13 Q20.5 -6 38.5 13" fill="none" stroke="url(#gold)" stroke-width="3" stroke-linecap="round"/>
-      <circle cx="20.5" cy="2" r="4" fill="#fbbf24" opacity="0.9"/>
-    </g>
-
-    <!-- Project Name -->
-    <text x="56" y="29" font-family="ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, monospace" font-size="26" font-weight="700" letter-spacing="-0.5px" fill="#f0f1f4">claude-agy-mcp</text>
-
-    <!-- Version pill -->
-    <rect x="286" y="10" width="66" height="24" rx="12" fill="#131926" stroke="#2a3347" stroke-width="0.8"/>
-    <text x="319" y="26" text-anchor="middle" font-family="ui-monospace, 'SF Mono', Menlo, monospace" font-size="11" font-weight="600" fill="#7c8aa0">v2.0.0</text>
-
-    <!-- Gemini model badge -->
-    <g transform="translate(364, 10)">
-      <rect width="232" height="24" rx="12" fill="#10131e" stroke="url(#geminiSoft)" stroke-width="1"/>
-      <use href="#sparkle" transform="translate(15,12) scale(0.82)" fill="url(#gemini)"/>
-      <text x="28" y="16" font-family="system-ui, -apple-system, sans-serif" font-size="11" font-weight="600" fill="#9DB4F2">Gemini 3.8 Flash (High)</text>
-      <circle cx="219" cy="12" r="3" fill="#22c55e"/>
-    </g>
+  <rect x="1" y="1" width="1278" height="498" rx="24" fill="url(#banner-bg)" stroke="#263647"/>
+  <g clip-path="url(#banner-clip)">
+    <ellipse cx="1010" cy="80" rx="450" ry="360" fill="url(#banner-glow)"/>
+    <rect x="716" y="0" width="564" height="348" fill="url(#banner-grid)"/>
   </g>
-
-  <!-- Claude / Gemini flow lockup (top-right) -->
-  <g transform="translate(952, 58)">
-    <!-- Claude starburst -->
-    <g transform="translate(12, 12)" stroke="#e5875f" stroke-width="2.4" stroke-linecap="round" filter="url(#iconGlow)">
-      <line x1="0" y1="-10" x2="0" y2="-5"/>
-      <line x1="7.1" y1="-7.1" x2="3.5" y2="-3.5"/>
-      <line x1="10" y1="0" x2="5" y2="0"/>
-      <line x1="7.1" y1="7.1" x2="3.5" y2="3.5"/>
-      <line x1="0" y1="10" x2="0" y2="5"/>
-      <line x1="-7.1" y1="7.1" x2="-3.5" y2="3.5"/>
-      <line x1="-10" y1="0" x2="-5" y2="0"/>
-      <line x1="-7.1" y1="-7.1" x2="-3.5" y2="-3.5"/>
+  <g font-family="Arial, Helvetica, sans-serif">
+    <!-- A simple orbital mark, drawn entirely as vectors. -->
+    <g fill="none" stroke="url(#banner-accent)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M 65 72 L 80 43 L 95 72 M 72 60 H 88"/>
+      <path d="M 61 68 C 57 58 93 48 99 57 C 103 64 77 76 67 74" stroke-width="1.5"/>
     </g>
-    <text x="30" y="17" font-family="system-ui, -apple-system, sans-serif" font-size="13" font-weight="600" fill="#e8eaf0">Claude</text>
+    <text x="112" y="64" fill="#9cbdc3" font-size="15" letter-spacing="1.6">MODEL CONTEXT PROTOCOL / ANTIGRAVITY CLI</text>
+    <text x="64" y="148" fill="#f0f6fb" font-size="66" font-weight="700" letter-spacing="-2">Antigravity MCP</text>
+    <text x="66" y="211" fill="url(#banner-accent)" font-size="42" font-weight="600" letter-spacing="-0.7">Gemini 4 Neon.</text>
+    <text x="66" y="259" fill="#c3d1df" font-size="23">Research, analyze, and implement with agy.</text>
+    <text x="66" y="292" fill="#94a9bd" font-size="23">Keep using the coding agent you choose.</text>
 
-    <!-- Bidirectional flow -->
-    <g stroke="#4a5568" stroke-width="1.4" stroke-linecap="round">
-      <line x1="86" y1="8" x2="120" y2="8"/>
-      <path d="M116 4.5 L121 8 L116 11.5" fill="none"/>
-      <line x1="120" y1="17" x2="86" y2="17"/>
-      <path d="M90 13.5 L85 17 L90 20.5" fill="none"/>
+    <!-- Illustrative selection, not a promise of account availability. -->
+    <rect x="756" y="58" width="460" height="264" rx="18" fill="#101e2b" stroke="#35525e"/>
+    <text x="782" y="96" fill="#8faeb9" font-size="15" letter-spacing="1.2">EXAMPLE MODEL SELECTION</text>
+    <circle cx="1175" cy="94" r="17" fill="#193a3b"/>
+    <path d="M 1175 83 L 1178 91 L 1186 94 L 1178 97 L 1175 105 L 1172 97 L 1164 94 L 1172 91 Z" fill="#9aefcd"/>
+    <text x="782" y="151" fill="#f0f6fb" font-size="33" font-weight="700" letter-spacing="-0.5">Gemini 4 Neon</text>
+    <text x="783" y="187" fill="#a0e5d2" font-family="'Courier New', Courier, monospace" font-size="21">gemini-4-neon-high</text>
+    <path d="M 782 208 H 1190" stroke="#2d4351"/>
+    <g font-size="17" text-anchor="middle">
+      <rect x="782" y="228" width="82" height="36" rx="8" fill="#172b39" stroke="#36515d"/>
+      <text x="823" y="252" fill="#b6cbd8">Low</text>
+      <rect x="874" y="228" width="108" height="36" rx="8" fill="#172b39" stroke="#36515d"/>
+      <text x="928" y="252" fill="#b6cbd8">Medium</text>
+      <rect x="992" y="228" width="86" height="36" rx="8" fill="url(#banner-accent)"/>
+      <text x="1035" y="252" fill="#102a29" font-weight="700">High</text>
+      <rect x="1088" y="228" width="102" height="36" rx="8" fill="#172b39" stroke="#36515d"/>
+      <text x="1139" y="252" fill="#b6cbd8">XHigh</text>
     </g>
+    <text x="782" y="295" fill="#93aebc" font-size="17">Select from your account's live model inventory.</text>
 
-    <!-- Gemini sparkle -->
-    <use href="#sparkle" transform="translate(143, 12) scale(1.15)" fill="url(#gemini)" filter="url(#iconGlow)"/>
-    <text x="158" y="17" font-family="system-ui, -apple-system, sans-serif" font-size="13" font-weight="600" fill="#9DB4F2">Gemini</text>
-  </g>
-
-  <!-- Tagline -->
-  <text x="80" y="114" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="19" font-weight="600" fill="#e8eaf0">Delegate heavy compute to Google's best coding model. Keep Claude's context clean.</text>
-  <text x="80" y="140" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="13.5" fill="#6b7a90">File analysis · git archaeology · adversarial reviews · quota-aware failover · session continuity</text>
-
-  <!-- ===================== TERMINAL CARD ===================== -->
-  <g transform="translate(80, 180)" filter="url(#cardDrop)">
-    <!-- Card body -->
-    <rect width="1120" height="234" rx="12" fill="url(#cardBg)" stroke="url(#cardBorder)" stroke-width="1"/>
-
-    <!-- Title bar -->
-    <rect width="1120" height="40" rx="12" fill="url(#titleBarBg)"/>
-    <rect y="28" width="1120" height="12" fill="url(#titleBarBg)"/>
-    <line x1="0" y1="40" x2="1120" y2="40" stroke="#1e2740" stroke-width="0.8"/>
-
-    <!-- Traffic lights -->
-    <circle cx="22" cy="20" r="5" fill="#ff5f57" opacity="0.9"/>
-    <circle cx="40" cy="20" r="5" fill="#febc2e" opacity="0.9"/>
-    <circle cx="58" cy="20" r="5" fill="#28c840" opacity="0.9"/>
-
-    <!-- Window title -->
-    <text x="560" y="25" text-anchor="middle" font-family="ui-monospace, 'SF Mono', Menlo, monospace" font-size="11.5" fill="#566480">claude-code · agy bridge session</text>
-
-    <!-- Status badge -->
-    <g transform="translate(944, 11)">
-      <rect width="156" height="18" rx="9" fill="#0c1018" stroke="#1e2740" stroke-width="0.8"/>
-      <circle cx="11" cy="9" r="2.5" fill="#22c55e"/>
-      <text x="20" y="13" font-family="ui-monospace, 'SF Mono', Menlo, monospace" font-size="9.5" fill="#7c8aa0">failover ready · live</text>
+    <path d="M 64 348 H 1216" stroke="#293c4b"/>
+    <text x="64" y="381" fill="#8fa7bb" font-size="14" letter-spacing="1.8">CHOOSE YOUR MCP CLIENT</text>
+    <g fill="#d9e5ee" font-size="25" font-weight="600" text-anchor="middle">
+      <text x="208" y="422">Pi</text>
+      <text x="496" y="422">OpenCode</text>
+      <text x="784" y="422">Codex</text>
+      <text x="1072" y="422">Claude Code</text>
     </g>
-
-    <!-- ============ TERMINAL CONTENT ============ -->
-    <g transform="translate(28, 64)" font-family="ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, monospace" font-size="13.5">
-
-      <!-- Line 1: Command -->
-      <g>
-        <text x="0" y="0" fill="#e5b44a" font-weight="700">❯</text>
-        <text x="16" y="0" fill="#e8eaf0" font-weight="600">analyze_files</text>
-        <text x="138" y="0" fill="#4a5568">[</text>
-        <text x="148" y="0" fill="#93c5fd">"src/server.ts"</text>
-        <text x="270" y="0" fill="#4a5568">,</text>
-        <text x="282" y="0" fill="#93c5fd">"src/runner.ts"</text>
-        <text x="404" y="0" fill="#4a5568">,</text>
-        <text x="416" y="0" fill="#93c5fd">"src/models.ts"</text>
-        <text x="540" y="0" fill="#4a5568">]</text>
-      </g>
-
-      <!-- Line 1b: comment -->
-      <text x="570" y="0" fill="#3d4a5e" font-size="12.5">// 14 files · 4,200 lines · never enters Claude's context</text>
-
-      <!-- Line 2: Route -->
-      <g transform="translate(16, 30)">
-        <text x="0" y="0" fill="#4a5568">↳</text>
-        <text x="16" y="0" fill="#7c8aa0">routed →</text>
-
-        <!-- Gemini model chip -->
-        <rect x="84" y="-14" width="196" height="20" rx="6" fill="#121627" stroke="url(#geminiSoft)" stroke-width="1"/>
-        <use href="#sparkle" transform="translate(97,-4) scale(0.72)" fill="url(#gemini)"/>
-        <text x="108" y="1" fill="#9DB4F2" font-weight="600" font-size="12.5">Gemini 3.8 Flash (High)</text>
-
-        <text x="292" y="0" fill="#4a5568">via agy CLI</text>
-
-        <!-- Benchmark indicator -->
-        <rect x="388" y="-14" width="112" height="20" rx="6" fill="#062e1f" stroke="#047857" stroke-opacity="0.5" stroke-width="0.8"/>
-        <text x="397" y="1" fill="#34d399" font-size="12">✓ 65.3% DeepSWE</text>
-      </g>
-
-      <!-- Line 3: Result -->
-      <g transform="translate(16, 62)">
-        <text x="0" y="0" fill="#4a5568">↳</text>
-        <text x="16" y="0" fill="#22c55e" font-weight="600">completed</text>
-        <text x="100" y="0" fill="#b0bdd0" font-size="13">3 edge cases identified, ranked critical→minor with file:line citations</text>
-      </g>
-
-      <!-- Separator: hairline with Gemini tint -->
-      <line x1="-6" y1="86" x2="1070" y2="86" stroke="url(#geminiSoft)" stroke-opacity="0.25" stroke-width="0.6"/>
-
-      <!-- Line 4: Session footer -->
-      <g transform="translate(0, 112)">
-        <text x="0" y="0" fill="#3d4a5e">[</text>
-        <text x="8" y="0" fill="#e5b44a" font-weight="600" font-size="12.5">claude-agy-mcp</text>
-        <text x="124" y="0" fill="#3d4a5e">]</text>
-        <text x="136" y="0" fill="#7c8aa0" font-size="12.5">model:</text>
-        <text x="184" y="0" fill="#e0e4ec" font-weight="500" font-size="12.5">Gemini 3.8 Flash (High)</text>
-        <text x="372" y="0" fill="#2a3347">│</text>
-        <text x="386" y="0" fill="#7c8aa0" font-size="12.5">session:</text>
-        <text x="446" y="0" fill="#9DB4F2" font-size="12.5">1f0c4a…9d</text>
-        <text x="538" y="0" fill="#4a5568" font-size="12">(use follow_up to continue · zero context overhead)</text>
-      </g>
-    </g>
-  </g>
-
-  <!-- ===================== BOTTOM STATS BAR ===================== -->
-  <g transform="translate(80, 438)">
-    <g font-family="system-ui, -apple-system, sans-serif" font-size="12">
-      <!-- DeepSWE -->
-      <text x="0" y="0" fill="#34d399" font-weight="700">65.3%</text>
-      <text x="42" y="0" fill="#566480">DeepSWE</text>
-
-      <text x="114" y="0" fill="#2a3347">·</text>
-
-      <!-- Terminal-Bench -->
-      <text x="130" y="0" fill="#6D9BF5" font-weight="700">85.8%</text>
-      <text x="172" y="0" fill="#566480">Terminal-Bench</text>
-
-      <text x="278" y="0" fill="#2a3347">·</text>
-
-      <!-- WebDev Arena -->
-      <text x="294" y="0" fill="#fbbf24" font-weight="700">#1</text>
-      <text x="312" y="0" fill="#566480">WebDev Arena</text>
-
-      <text x="410" y="0" fill="#2a3347">·</text>
-
-      <!-- Token economics -->
-      <text x="426" y="0" fill="#E1596F" font-weight="700">$0.75</text>
-      <text x="468" y="0" fill="#566480">/ 1M input</text>
-
-      <text x="546" y="0" fill="#2a3347">·</text>
-
-      <!-- Context -->
-      <text x="562" y="0" fill="#e0e4ec" font-weight="700">1M</text>
-      <text x="582" y="0" fill="#566480">token context</text>
-    </g>
-
-    <!-- Gemini gradient baseline accent -->
-    <rect x="0" y="14" width="1120" height="2" rx="1" fill="url(#gemini)" opacity="0.35"/>
+    <path d="M 352 400 V 429 M 640 400 V 429 M 928 400 V 429" stroke="#2b3e4e"/>
+    <text x="640" y="466" fill="#90a9bd" font-size="18" text-anchor="middle">Your choice of host · Account-aware model routing · Session continuity</text>
   </g>
 </svg>

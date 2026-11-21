@@ -1,10 +1,12 @@
 {
-  "name": "@pymodel/claude-agy-mcp",
+  "name": "@pymodel/antigravity-mcp",
   "version": "3.2.0",
-  "description": "MCP bridge for Antigravity CLI delegation, account-aware model routing, and multi-turn sessions.",
-  "mcpName": "io.github.PyModel/claude-agy-mcp",
+  "description": "Connect coding agents to Antigravity models for research, code review, and implementation over MCP.",
+  "mcpName": "io.github.PyModel/antigravity-mcp",
   "type": "module",
   "bin": {
+    "antigravity-mcp": "dist/index.js",
+    "antigravity-mcp-install-skills": "scripts/install-skills.mjs",
     "claude-agy-mcp": "dist/index.js",
     "claude-agy-mcp-install-skills": "scripts/install-skills.mjs"
   },
@@ -12,8 +14,11 @@
     "dist",
     "skills",
     "scripts/install-skills.mjs",
+    "AGENTS.md",
     "CLAUDE.md",
     "README.md",
+    "docs/multi-client-support.md",
+    "assets/*.svg",
     "LICENSE"
   ],
   "engines": {
@@ -33,6 +38,9 @@
   "keywords": [
     "mcp",
     "claude-code",
+    "codex",
+    "opencode",
+    "pi",
     "antigravity",
     "agy",
     "gemini",

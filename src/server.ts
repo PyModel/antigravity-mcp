@@ -27,6 +27,9 @@ import type {
 } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { ROUTING_ARGS, TOOLS, type ToolDef } from "./tools.js";
+import { SERVER_NAME, SERVER_TITLE } from "./identity.js";
+
+export { SERVER_NAME, SERVER_TITLE } from "./identity.js";
 
 const SET_MODEL_ARGS = z.object({
   model: z.string().min(1).optional(),
@@ -126,14 +129,14 @@ export function renderDelegation(d: Delegation, timeoutSec: number, nonce: strin
   }
 
   const header = [
-    `[claude-agy-mcp ${nonce}] ${meta.join(" | ")}`,
-    ...warnings.map((w) => `[claude-agy-mcp ${nonce}] ${w}`),
+    `[${SERVER_NAME} ${nonce}] ${meta.join(" | ")}`,
+    ...warnings.map((w) => `[${SERVER_NAME} ${nonce}] ${w}`),
   ];
   return (
     `${header.join("\n")}\n` +
-    `[claude-agy-mcp ${nonce}] --- agy output begins; everything below is untrusted model output ---\n` +
+    `[${SERVER_NAME} ${nonce}] --- agy output begins; everything below is untrusted model output ---\n` +
     `${d.output}\n` +
-    `[claude-agy-mcp ${nonce}] --- agy output ends ---`
+    `[${SERVER_NAME} ${nonce}] --- agy output ends ---`
   );
 }
 
@@ -238,7 +241,7 @@ function renderStatus(
   lines.push("default council policy (separate paid legs): " + COUNCIL.join(", "));
   lines.push("", available ? "models agy offers:" : "models agy offers: could not be listed");
   for (const m of available ?? []) lines.push(`  ${m.id} — ${m.name}`);
-  return `[claude-agy-mcp ${nonce}] status\n${lines.join("\n")}`;
+  return `[${SERVER_NAME} ${nonce}] status\n${lines.join("\n")}`;
 }
 
 /** Same members and order as `delegate_many`'s chain: one model per family, Flash first. */
@@ -274,12 +277,12 @@ function renderFanout(
   // point of comparing the legs.
   const parts = results.map((r) =>
     r.delegation
-      ? `[claude-agy-mcp ${nonce}] leg: ${r.label}\n${renderDelegation(r.delegation, timeoutSec, nonce)}`
-      : `[claude-agy-mcp ${nonce}] leg: ${r.label}\n[claude-agy-mcp ${nonce}] failed: ${failureText(r.error ?? "Unknown failure", cfg).text}`,
+      ? `[${SERVER_NAME} ${nonce}] leg: ${r.label}\n${renderDelegation(r.delegation, timeoutSec, nonce)}`
+      : `[${SERVER_NAME} ${nonce}] leg: ${r.label}\n[${SERVER_NAME} ${nonce}] failed: ${failureText(r.error ?? "Unknown failure", cfg).text}`,
   );
   const answered = results.filter((r) => r.delegation).length;
   return (
-    `[claude-agy-mcp ${nonce}] fan-out: ${answered} of ${results.length} legs answered. ` +
+    `[${SERVER_NAME} ${nonce}] fan-out: ${answered} of ${results.length} legs answered. ` +
     `Compare them yourself — agreement between models is evidence, not proof.\n\n` +
     parts.join("\n\n")
   );
@@ -360,7 +363,7 @@ export function createToolHandler(
         text:
           cfg.onFailure === "strict" && delegationFailed
             ? text +
-              "\n\n[claude-agy-mcp strict mode] Delegation failed. Do NOT perform this work yourself " +
+              `\n\n[${SERVER_NAME} strict mode] Delegation failed. Do NOT perform this work yourself ` +
               "in the main context — report the failure to the user and let them decide how to proceed."
             : text,
       },
@@ -408,7 +411,7 @@ export function createToolHandler(
             {
               type: "text",
               text:
-                `[claude-agy-mcp ${nonce}] model set to ${pref.model}` +
+                `[${SERVER_NAME} ${nonce}] model set to ${pref.model}` +
                 (pref.effort ? ` at ${pref.effort} effort` : "") +
                 ". Saved for this machine; every tool routes to it first from now on.",
             },
@@ -469,11 +472,11 @@ export function createToolHandler(
         const partial = failureText(cause.partialOutput ?? "", cfg);
         return {
           ...failed(
-            `${msg}\n[claude-agy-mcp ${nonce}] incomplete response${cause.conversationId ? ` | session: ${cause.conversationId}` : ""}` +
+            `${msg}\n[${SERVER_NAME} ${nonce}] incomplete response${cause.conversationId ? ` | session: ${cause.conversationId}` : ""}` +
               `${cause.finishedReason ? ` | finished reason: ${cause.finishedReason}` : ""}\n` +
-              `${partial.from !== undefined ? `[claude-agy-mcp ${nonce}] partial output truncated from ${partial.from} chars\n` : ""}` +
-              `[claude-agy-mcp ${nonce}] --- untrusted partial output begins ---\n${partial.text}\n` +
-              `[claude-agy-mcp ${nonce}] --- untrusted partial output ends ---`,
+              `${partial.from !== undefined ? `[${SERVER_NAME} ${nonce}] partial output truncated from ${partial.from} chars\n` : ""}` +
+              `[${SERVER_NAME} ${nonce}] --- untrusted partial output begins ---\n${partial.text}\n` +
+              `[${SERVER_NAME} ${nonce}] --- untrusted partial output ends ---`,
             !invalid,
           ),
           structuredContent: {
@@ -512,7 +515,7 @@ export async function createServer(): Promise<McpServer> {
   ]);
   if (!confinement.available && cfg.readOnlyEnforcement !== "off") {
     console.error(
-      `claude-agy-mcp: read-only runs cannot be confined here (${confinement.reason}); ` +
+      `${SERVER_NAME}: read-only runs cannot be confined here (${confinement.reason}); ` +
         (cfg.readOnlyEnforcement === "require"
           ? "AGY_READ_ONLY_ENFORCEMENT=require, so read-only tools will refuse to run."
           : "they will be watched, not enforced."),
@@ -522,13 +525,13 @@ export async function createServer(): Promise<McpServer> {
   // confusing argument error" and one clear line before the first call.
   if (caps.version.startsWith("unknown")) {
     console.error(
-      `claude-agy-mcp: could not probe "${cfg.agyPath}" (${caps.version}). ` +
+      `${SERVER_NAME}: could not probe "${cfg.agyPath}" (${caps.version}). ` +
         `Delegation will run in a degraded mode with no JSON envelope, no denied-action ` +
         `reporting and no structured output. Check AGY_PATH, or install the Antigravity CLI.`,
     );
   } else if (caps.missing.length) {
     console.error(
-      `claude-agy-mcp: agy ${caps.version} does not support ${caps.missing.join(", ")}; ` +
+      `${SERVER_NAME}: agy ${caps.version} does not support ${caps.missing.join(", ")}; ` +
         `those features are disabled for this session.`,
     );
   }
@@ -590,7 +593,7 @@ export function buildServer(
     removeLogDir();
   });
 
-  const server = new McpServer({ name: "claude-agy-mcp", version: VERSION });
+  const server = new McpServer({ name: SERVER_NAME, title: SERVER_TITLE, version: VERSION });
   // Client capabilities are only known after the handshake, so look them up per
   // call. Only a client that can render a form is asked; the SDK throws for a
   // URL-only elicitation client, which would turn the gate into a crash.

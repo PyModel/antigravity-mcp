@@ -11,10 +11,15 @@ import { createHash, randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import path from "node:path";
 import type { CooldownStore } from "./quota.js";
+import { LEGACY_SERVER_NAME, SERVER_NAME } from "./identity.js";
 
-/** `$XDG_CACHE_HOME/claude-agy-mcp`, or `~/.cache/claude-agy-mcp`. */
+/** `$XDG_CACHE_HOME/antigravity-mcp`, or `~/.cache/antigravity-mcp`. */
 export function cacheDir(env: Record<string, string | undefined> = process.env): string {
-  return path.join(env.XDG_CACHE_HOME || path.join(homedir(), ".cache"), "claude-agy-mcp");
+  return path.join(env.XDG_CACHE_HOME || path.join(homedir(), ".cache"), SERVER_NAME);
+}
+
+export function legacyCacheDir(env: Record<string, string | undefined> = process.env): string {
+  return path.join(env.XDG_CACHE_HOME || path.join(homedir(), ".cache"), LEGACY_SERVER_NAME);
 }
 
 function parse(raw: string): Record<string, number> {
@@ -48,16 +53,22 @@ function merge(a: Record<string, number>, b: Record<string, number>): Record<str
  * records. A temporary file is atomically renamed only to an identical record
  * key, and cleanup removes expired records only. The older cooldowns.json is
  * still read for compatibility, but is never rewritten by this implementation.
+ * The previous product's cache is also read on every load, taking the later
+ * expiry across both directories. Writes and expiration cleanup only touch
+ * the new directory. Explicit directories remain isolated unless a legacy
+ * directory is also supplied.
  * An unwritable cache degrades to in-process cooldowns.
  */
 export class FileCooldownStore implements CooldownStore {
-  private readonly legacyFile: string;
+  private readonly readDirs: string[];
   private readonly recordsDir: string;
   private own: Record<string, number> = {};
 
-  constructor(dir: string = cacheDir()) {
-    this.legacyFile = path.join(dir, "cooldowns.json");
-    this.recordsDir = path.join(dir, "cooldowns.d");
+  constructor(dir?: string, legacyDir?: string) {
+    const currentDir = dir ?? cacheDir();
+    const previousDir = legacyDir ?? (dir === undefined ? legacyCacheDir() : undefined);
+    this.readDirs = [...new Set([currentDir, ...(previousDir === undefined ? [] : [previousDir])])];
+    this.recordsDir = path.join(currentDir, "cooldowns.d");
   }
 
   private read(file: string): Record<string, number> {
@@ -68,20 +79,22 @@ export class FileCooldownStore implements CooldownStore {
     }
   }
 
-  private records(): string[] {
+  private records(dir: string = this.recordsDir): string[] {
     try {
-      return readdirSync(this.recordsDir).filter((file) =>
-        /^[a-f0-9]{64}\.[\d.e+-]+\.json$/.test(file),
-      );
+      return readdirSync(dir).filter((file) => /^[a-f0-9]{64}\.[\d.e+-]+\.json$/.test(file));
     } catch {
       return [];
     }
   }
 
   private fromDisk(): Record<string, number> {
-    let entries = this.read(this.legacyFile);
-    for (const file of this.records())
-      entries = merge(entries, this.read(path.join(this.recordsDir, file)));
+    let entries: Record<string, number> = {};
+    for (const dir of this.readDirs) {
+      entries = merge(entries, this.read(path.join(dir, "cooldowns.json")));
+      const recordsDir = path.join(dir, "cooldowns.d");
+      for (const file of this.records(recordsDir))
+        entries = merge(entries, this.read(path.join(recordsDir, file)));
+    }
     return entries;
   }
 

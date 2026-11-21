@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import path from "node:path";
 import { isEffort, type Effort } from "./models.js";
+import { LEGACY_SERVER_NAME, SERVER_NAME } from "./identity.js";
 
 export type { Effort } from "./models.js";
 
@@ -20,9 +21,13 @@ export interface PreferenceStore {
   save(pref: ModelPreference | null): void;
 }
 
-/** `$XDG_CONFIG_HOME/claude-agy-mcp`, or `~/.config/claude-agy-mcp`. */
+/** `$XDG_CONFIG_HOME/antigravity-mcp`, or `~/.config/antigravity-mcp`. */
 export function configDir(env: Record<string, string | undefined> = process.env): string {
-  return path.join(env.XDG_CONFIG_HOME || path.join(homedir(), ".config"), "claude-agy-mcp");
+  return path.join(env.XDG_CONFIG_HOME || path.join(homedir(), ".config"), SERVER_NAME);
+}
+
+export function legacyConfigDir(env: Record<string, string | undefined> = process.env): string {
+  return path.join(env.XDG_CONFIG_HOME || path.join(homedir(), ".config"), LEGACY_SERVER_NAME);
 }
 
 /**
@@ -31,17 +36,37 @@ export function configDir(env: Record<string, string | undefined> = process.env)
  * "Ask once, then that's it" only holds if the answer outlives the process
  * that asked. Writes go to a temp file and are renamed into place, so a
  * concurrent reader never sees a half-written file.
+ *
+ * The old product's choice is read only while the new file is absent. Saving
+ * a choice or clearing it writes the new file; an explicit clear is an empty
+ * object, so an old choice cannot reappear after restarting. No legacy file
+ * is moved, overwritten or removed. An explicitly supplied directory is
+ * isolated unless the caller also supplies a legacy directory.
  */
 export class FilePreferenceStore implements PreferenceStore {
   private readonly file: string;
+  private readonly legacyFile?: string;
 
-  constructor(dir: string = configDir()) {
-    this.file = path.join(dir, "preferences.json");
+  constructor(dir?: string, legacyDir?: string) {
+    this.file = path.join(dir ?? configDir(), "preferences.json");
+    const previousDir = legacyDir ?? (dir === undefined ? legacyConfigDir() : undefined);
+    if (previousDir !== undefined) this.legacyFile = path.join(previousDir, "preferences.json");
   }
 
   load(): ModelPreference | null {
+    let contents: string;
     try {
-      const raw: unknown = JSON.parse(readFileSync(this.file, "utf8"));
+      contents = readFileSync(this.file, "utf8");
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT" || !this.legacyFile) return null;
+      try {
+        contents = readFileSync(this.legacyFile, "utf8");
+      } catch {
+        return null;
+      }
+    }
+    try {
+      const raw: unknown = JSON.parse(contents);
       if (typeof raw !== "object" || raw === null) return null;
       const o = raw as Record<string, unknown>;
       if (typeof o.model !== "string" || !o.model.trim()) return null;

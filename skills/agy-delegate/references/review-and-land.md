@@ -87,7 +87,7 @@ git diff > /tmp/review.diff
 ```
 
 ```
-mcp__claude-agy-mcp__adversarial_review(files: ["/tmp/review.diff"], focus: "concurrency", cwd: "/path/to/repo")
+adversarial_review(files: ["/tmp/review.diff"], focus: "concurrency", cwd: "/path/to/repo")
 ```
 
 Prefer `files` over inline `content` for a real diff: the prompt rides `agy --print` as a command-line
@@ -118,7 +118,7 @@ If the review turns up problems, don't restate the entire brief. Continue the sa
 conversation with just the correction:
 
 ```
-mcp__claude-agy-mcp__follow_up(
+follow_up(
   session_id: "<from the dispatch response header>",
   question: "The fix is right, but the test mocks the DB session - use the real migrated fixture instead, and drop the now-unused import.",
   cwd: "/path/to/repo",

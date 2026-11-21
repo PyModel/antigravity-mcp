@@ -26,10 +26,14 @@ describe("the server over MCP", () => {
 
   afterAll(() => client.close());
 
-  it("advertises every tool with its version", async () => {
+  it("advertises the new product identity and unchanged tools to an ordinary MCP client", async () => {
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual(TOOLS.map((t) => t.name).sort());
-    expect(client.getServerVersion()?.version).toBe(VERSION);
+    expect(client.getServerVersion()).toMatchObject({
+      name: "antigravity-mcp",
+      title: "Antigravity MCP",
+      version: VERSION,
+    });
   });
 
   it("publishes a JSON Schema for a tool whose schema carries a cross-field rule", async () => {

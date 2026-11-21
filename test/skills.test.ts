@@ -94,6 +94,29 @@ function installerFixture() {
  * the bridge's own release notes warn about.
  */
 describe("install-skills", () => {
+  it("discovers OpenCode under XDG_CONFIG_HOME without installing during --list", async () => {
+    const f = installerFixture();
+    const xdgConfig = path.join(f.root, "xdg config");
+    const target = path.join(xdgConfig, "opencode", "skills");
+    const env = { ...process.env, XDG_CONFIG_HOME: xdgConfig };
+
+    const absent = await run(process.execPath, [f.installer, "--list"], { env });
+    expect(absent.stdout).not.toContain(`${target} (OpenCode)`);
+    expect(existsSync(xdgConfig)).toBe(false);
+
+    const existing = path.join(target, "agy-delegate");
+    mkdirSync(existing, { recursive: true });
+    writeFileSync(path.join(existing, "SKILL.md"), "keep this existing skill");
+
+    const detected = await run(process.execPath, [f.installer, "--list"], { env });
+    expect(detected.stdout.split("\n").map((line) => line.trim())).toContain(
+      `${target} (OpenCode)`,
+    );
+    expect(readFileSync(path.join(existing, "SKILL.md"), "utf8")).toBe("keep this existing skill");
+    expect(readdirSync(target)).toEqual(["agy-delegate"]);
+    expect(readdirSync(existing)).toEqual(["SKILL.md"]);
+  });
+
   it("refuses to replace a symlinked skill, and replaces it under --force", async () => {
     const dir = tempDir();
     const linked = path.join(dir, "agy-delegate");
@@ -218,14 +241,13 @@ describe("install-skills", () => {
 });
 
 /**
- * The bin is a package selection, not a subcommand, and v3.0.0 documented it
- * both wrong ways: `npx @pymodel/claude-agy-mcp-install-skills` is a package
- * name to npx and 404s, and `npx @pymodel/claude-agy-mcp install-skills` starts
- * the stdio server with a stray argument and hangs.
+ * The installer bin requires explicit package selection. Treating its name as
+ * a package produces a 404; passing install-skills as a server argument starts
+ * the stdio server and hangs. Both identities must avoid those broken forms.
  */
 describe("documented install command", () => {
   const ROOT = path.join(import.meta.dirname, "..");
-  const WORKING = "npx --package @pymodel/claude-agy-mcp claude-agy-mcp-install-skills";
+  const WORKING = "npx --package @pymodel/antigravity-mcp antigravity-mcp-install-skills";
 
   /** Invocations only: prose naming the broken forms as broken is allowed. */
   const invocations = (rel: string) =>
@@ -236,14 +258,21 @@ describe("documented install command", () => {
 
   it.each(["README.md", "scripts/install-skills.mjs"])("%s never invokes a broken form", (rel) => {
     for (const line of invocations(rel)) {
-      expect(line).not.toMatch(/^npx\s+(?:-y\s+)?@pymodel\/claude-agy-mcp-install-skills/);
-      expect(line).not.toMatch(/^npx\s+(?:-y\s+)?@pymodel\/claude-agy-mcp\s+install-skills/);
+      expect(line).not.toMatch(
+        /^npx\s+(?:-y\s+)?@pymodel\/(?:antigravity-mcp|claude-agy-mcp)-install-skills/,
+      );
+      expect(line).not.toMatch(
+        /^npx\s+(?:-y\s+)?@pymodel\/(?:antigravity-mcp|claude-agy-mcp)\s+install-skills/,
+      );
     }
   });
 
-  it("documents the working form, and the bin it names exists", () => {
+  it("documents the working form and preserves the compatible executable aliases", () => {
     expect(readFileSync(path.join(ROOT, "README.md"), "utf8")).toContain(WORKING);
     const pkg = JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8"));
+    expect(pkg.bin["antigravity-mcp-install-skills"]).toBe("scripts/install-skills.mjs");
     expect(pkg.bin["claude-agy-mcp-install-skills"]).toBe("scripts/install-skills.mjs");
+    expect(pkg.bin["antigravity-mcp"]).toBe("dist/index.js");
+    expect(pkg.bin["claude-agy-mcp"]).toBe("dist/index.js");
   });
 });
