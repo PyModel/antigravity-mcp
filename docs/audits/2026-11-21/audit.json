@@ -5,7 +5,7 @@
     "repository": "https://github.com/PyModel/claude-agy-mcp.git",
     "snapshot": "All finding locations and baseline repros refer to clean commit 29f5b5c8d5f4343d1cab33c774f8deda359e64a2. Applied candidate: branch fix/gemini4-routing-and-reliability, version 3.2.0, uncommitted working tree fingerprint 713bd439ecb142417c0e59714158715454aef8231048074abd8485af9796b1b5; see evidence/candidate-snapshot.json. This is not a deployed or published artifact identity. Accepted source-fix implementation is completed; final Linux integration, typecheck/release checks and rebuilt Node 18/24 package smoke passed. Remaining partial completion concerns platform CI and live-provider evaluation.",
     "started_at": "2026-11-21T21:49:33.187126+00:00",
-    "completed_at": "2026-11-21T22:19:10.138933+00:00",
+    "completed_at": "2026-11-21T22:27:27Z",
     "mode": "full",
     "completion": "partial",
     "working_tree": "dirty",
@@ -20,7 +20,7 @@
       "No credentials, private account payloads or authenticated remote inference were collected."
     ],
     "limitations": [
-      "Full-source scope with partial completion: live-provider/account evaluation and macOS runtime/actual Docker CI remain pending. No claim that all bugs were found or that static review certifies production readiness.",
+      "Full-source scope with partial completion: live-provider/account evaluation and a hosted CI rerun after a macOS test-path correction remain pending. No claim that all bugs were found or that review certifies production readiness.",
       "Baseline checkout was clean. The uploaded plan referred to earlier dirty changes absent here; findings are reconciled against the actual baseline rather than that unseen draft.",
       "Inventory observed 97 candidate paths and 95 files at collection time; metadata enumeration is not correctness coverage, and the candidate changed during the repair.",
       "The personal local stdio trust model limits some advisory exposure. AGY authentication, billing, external tool effects and hosted branch rules are not established by source alone.",
@@ -30,7 +30,7 @@
     ],
     "candidate_version": "3.2.0",
     "baseline_commit": "29f5b5c8d5f4343d1cab33c774f8deda359e64a2",
-    "implementation_status": "Source fixes completed in candidate 3.2.0; final Linux full suite, typecheck, release checks and rebuilt Node 18/24 package smoke passed. Hosted platform CI and live provider evaluation remain outside completed local verification."
+    "implementation_status": "Source fixes completed in candidate 3.2.0. Final Linux suite, typecheck and Node 18/24 package checks passed. Hosted CI also verified Docker and all macOS confinement tests; its sole macOS failure was a lexical-versus-canonical path expectation in a relay fixture. That expectation is corrected for rerun; live provider evaluation remains unperformed."
   },
   "coverage": [
     {
@@ -139,13 +139,13 @@
         "test/execution-regressions.test.ts"
       ],
       "owner": "execution specialist",
-      "status": "partial",
+      "status": "reviewed",
       "checks": [
         "Allowed-root and symlink semantics; incomplete scans; nested repository/ignored content; confinement profile and Linux refusal behavior."
       ],
-      "evidence": ["C-EXEC-FIX", "src/worktree.ts:snapshotTree", "src/confine.ts"],
+      "evidence": ["C-EXEC-FIX", "src/worktree.ts:snapshotTree", "src/confine.ts", "C-MAC"],
       "gaps": [
-        "Linux checks and profile inspection completed; macOS runtime sandbox checks are skipped locally. Run C-MAC before platform assurance."
+        "Hosted CI passed all 30 confinement tests, including the five real macOS sandbox cases, and all 22 execution regression tests. This validates the platform fixtures, not a live authenticated AGY workload."
       ]
     },
     {
@@ -184,9 +184,17 @@
       "checks": [
         "Baseline production failure; advisory graph; compatible upgrades; required aggregate check; isolated package install on Node 18 and 24."
       ],
-      "evidence": ["C-PROD-BASE", "C-AUDIT-FINAL", "C-PACK-18", "C-PACK-24", "C-TYPE-FINAL"],
+      "evidence": [
+        "C-PROD-BASE",
+        "C-AUDIT-FINAL",
+        "C-PACK-18",
+        "C-PACK-24",
+        "C-TYPE-FINAL",
+        "C-DOCKER",
+        "C-MAC"
+      ],
       "gaps": [
-        "Current final Node 18/24 package artifacts passed. Actual Docker build and macOS runtime remain PR CI gates; local Docker binary is absent. Hosted branch-rule settings and registry publication are not asserted."
+        "Hosted Node 18/24 package checks, Docker build and commitlint passed. macOS suite rerun is pending a canonical-path test correction; the aggregate correctly failed when that test failed. Registry publication remains outside this task."
       ]
     },
     {
@@ -2059,19 +2067,21 @@
     },
     {
       "id": "C-MAC",
-      "command": "macOS CI execution/confinement matrix",
-      "environment": "macOS runner pending",
-      "status": "not-run",
-      "exit_code": null,
-      "summary": "Local host is Linux. macOS sandbox-exec behavior and platform-only cases require the configured CI run."
+      "command": "npm test (macOS GitHub Actions matrix)",
+      "environment": "macos-latest hosted runner, PR merge containing 50c5cc45cc071b5e52148fd79fa841f77b581355",
+      "status": "failed",
+      "exit_code": 1,
+      "summary": "Hosted macOS: 537 passed, 1 failed, 1 live-provider skip. All 30 confinement and 22 execution regression tests passed. Sole failure: relay symlink test expected /var while runtime correctly canonicalized to /private/var. The assertion now canonicalizes the expected path; rerun pending.",
+      "artifact": "https://github.com/PyModel/claude-agy-mcp/actions/runs/44956495100"
     },
     {
       "id": "C-DOCKER",
       "command": "docker build -t claude-agy-mcp-smoke .",
-      "environment": "Linux disposable checkout; no live AGY/provider calls",
-      "status": "blocked",
-      "exit_code": null,
-      "summary": "Docker binary is absent locally. Actual Docker build is configured in PR CI; production dependency installation and packed artifact were independently verified."
+      "environment": "ubuntu-latest hosted Node 24 package job, run 44956495100",
+      "status": "passed",
+      "exit_code": 0,
+      "summary": "Actual Docker build completed and exported the image successfully. Both hosted Node 18.20.8 and 24.22.3 packed-consumer checks also passed.",
+      "artifact": "https://github.com/PyModel/claude-agy-mcp/actions/runs/44956495100"
     },
     {
       "id": "C-LIVE",
@@ -2080,6 +2090,15 @@
       "status": "not-run",
       "exit_code": null,
       "summary": "No authenticated provider call or paid inference was run. Entitlements, credit economics, current live CLI behavior, and default-policy quality/latency remain unmeasured."
+    },
+    {
+      "id": "C-CI-AGGREGATE",
+      "command": "required test aggregate shell gate",
+      "environment": "GitHub Actions run 44956495100",
+      "status": "failed",
+      "exit_code": 1,
+      "summary": "Correctly blocked this run: SUITE_RESULT=failure while PACKAGE_RESULT and COMMITLINT_RESULT were success. This exercises the repaired required-check failure path.",
+      "artifact": "https://github.com/PyModel/claude-agy-mcp/actions/runs/44956495100"
     }
   ],
   "sources": [
@@ -2435,7 +2454,8 @@
     "notes": [
       "All reported locations are baseline locations; apply status is separate from original defect existence.",
       "Coordinator owns final integration/release evidence, commits and PR. This report task did not modify product code or commit.",
-      "Checker validates report consistency and references, not evidence truth, severity or completeness."
+      "Checker validates report consistency and references, not evidence truth, severity or completeness.",
+      "Hosted run 44956495100 establishes Docker and macOS confinement coverage. Inspect the latest PR57 checks for the rerun after the canonical-path fixture correction."
     ]
   }
 }

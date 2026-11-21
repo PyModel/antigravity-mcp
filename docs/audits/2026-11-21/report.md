@@ -4,7 +4,7 @@
 
 **Review:** full / partial
 
-**Completed:** 2026-11-21T22:19:10.138933+00:00
+**Completed:** 2026-11-21T22:27:27Z
 
 ## Scope and evidence boundary
 
@@ -12,7 +12,7 @@
 
 **Excluded:** New docs/audits/2026-11-21 report directory excluded from the inspected source snapshot.; node\_modules and generated bundles not copied into report; dependency risk reviewed through lockfile/advisories and installed-artifact tests.; No credentials, private account payloads or authenticated remote inference were collected.
 
-- Full-source scope with partial completion: live-provider/account evaluation and macOS runtime/actual Docker CI remain pending. No claim that all bugs were found or that static review certifies production readiness.
+- Full-source scope with partial completion: live-provider/account evaluation and a hosted CI rerun after a macOS test-path correction remain pending. No claim that all bugs were found or that review certifies production readiness.
 - Baseline checkout was clean. The uploaded plan referred to earlier dirty changes absent here; findings are reconciled against the actual baseline rather than that unseen draft.
 - Inventory observed 97 candidate paths and 95 files at collection time; metadata enumeration is not correctness coverage, and the candidate changed during the repair.
 - The personal local stdio trust model limits some advisory exposure. AGY authentication, billing, external tool effects and hosted branch rules are not established by source alone.
@@ -1284,7 +1284,7 @@ None established within the reviewed scope.
 | CV-MODELS   | Inventory, selection, effort, preferences and configuration                   | coordinator and delegation specialist                                    | reviewed       |
 | CV-EXEC     | Process supervision, retries, warm lifecycle and terminal protocol            | execution specialist; coordinator and delegation specialist cross-review | reviewed       |
 | CV-STATE    | Admission, token accounting, persistent preferences and cooldown coordination | coordinator and delegation specialist                                    | reviewed       |
-| CV-FS       | Workspace validation, read-only coverage and confinement                      | execution specialist                                                     | partial        |
+| CV-FS       | Workspace validation, read-only coverage and confinement                      | execution specialist                                                     | reviewed       |
 | CV-RELAY    | Bundled raw relay and installer                                               | delegation scout; research/relay implementer                             | reviewed       |
 | CV-DELIVERY | Dependencies, packaging, release metadata and CI                              | coordinator; delegation specialist independent source review             | partial        |
 | CV-DOCS     | Documentation, research, registration and model/cost claims                   | coordinator and research specialist                                      | reviewed       |
@@ -1413,10 +1413,11 @@ None established within the reviewed scope.
 - C-EXEC-FIX
 - src/worktree.ts:snapshotTree
 - src/confine.ts
+- C-MAC
 
 **Gaps / non-applicability:**
 
-- Linux checks and profile inspection completed; macOS runtime sandbox checks are skipped locally. Run C-MAC before platform assurance.
+- Hosted CI passed all 30 confinement tests, including the five real macOS sandbox cases, and all 22 execution regression tests. This validates the platform fixtures, not a live authenticated AGY workload.
 
 ### CV-RELAY · Bundled raw relay and installer
 
@@ -1467,10 +1468,12 @@ None established within the reviewed scope.
 - C-PACK-18
 - C-PACK-24
 - C-TYPE-FINAL
+- C-DOCKER
+- C-MAC
 
 **Gaps / non-applicability:**
 
-- Current final Node 18/24 package artifacts passed. Actual Docker build and macOS runtime remain PR CI gates; local Docker binary is absent. Hosted branch-rule settings and registry publication are not asserted.
+- Hosted Node 18/24 package checks, Docker build and commitlint passed. macOS suite rerun is pending a canonical-path test correction; the aggregate correctly failed when that test failed. Registry publication remains outside this task.
 
 ### CV-DOCS · Documentation, research, registration and model/cost claims
 
@@ -1721,25 +1724,25 @@ Current final built artifact passed the same isolated package/stdio/skill smoke 
 
 Refreshed lockfile: zero known vulnerabilities. SDK 1.32.2, Zod 4.6.7, Vitest 5.1.1. Does not establish absence of unknown or application defects.
 
-### C-MAC · not-run
+### C-MAC · failed
 
-**Command:** macOS CI execution/confinement matrix
+**Command:** npm test (macOS GitHub Actions matrix)
 
-**Environment:** macOS runner pending
+**Environment:** macos-latest hosted runner, PR merge containing 50c5cc45cc071b5e52148fd79fa841f77b581355
 
-**Exit:** None
+**Exit:** 1
 
-Local host is Linux. macOS sandbox-exec behavior and platform-only cases require the configured CI run.
+Hosted macOS: 537 passed, 1 failed, 1 live-provider skip. All 30 confinement and 22 execution regression tests passed. Sole failure: relay symlink test expected /var while runtime correctly canonicalized to /private/var. The assertion now canonicalizes the expected path; rerun pending.
 
-### C-DOCKER · blocked
+### C-DOCKER · passed
 
 **Command:** docker build -t claude-agy-mcp-smoke .
 
-**Environment:** Linux disposable checkout; no live AGY/provider calls
+**Environment:** ubuntu-latest hosted Node 24 package job, run 44956495100
 
-**Exit:** None
+**Exit:** 0
 
-Docker binary is absent locally. Actual Docker build is configured in PR CI; production dependency installation and packed artifact were independently verified.
+Actual Docker build completed and exported the image successfully. Both hosted Node 18.20.8 and 24.22.3 packed-consumer checks also passed.
 
 ### C-LIVE · not-run
 
@@ -1750,6 +1753,16 @@ Docker binary is absent locally. Actual Docker build is configured in PR CI; pro
 **Exit:** None
 
 No authenticated provider call or paid inference was run. Entitlements, credit economics, current live CLI behavior, and default-policy quality/latency remain unmeasured.
+
+### C-CI-AGGREGATE · failed
+
+**Command:** required test aggregate shell gate
+
+**Environment:** GitHub Actions run 44956495100
+
+**Exit:** 1
+
+Correctly blocked this run: SUITE\_RESULT=failure while PACKAGE\_RESULT and COMMITLINT\_RESULT were success. This exercises the repaired required-check failure path.
 
 ## Source ledger
 
@@ -1949,3 +1962,4 @@ Model Context Protocol; accessed 2026-11-21; 2026-07-28 specification.
 - All reported locations are baseline locations; apply status is separate from original defect existence.
 - Coordinator owns final integration/release evidence, commits and PR. This report task did not modify product code or commit.
 - Checker validates report consistency and references, not evidence truth, severity or completeness.
+- Hosted run 44956495100 establishes Docker and macOS confinement coverage. Inspect the latest PR57 checks for the rerun after the canonical-path fixture correction.

@@ -6,6 +6,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   truncateSync,
@@ -250,7 +251,7 @@ describe("standalone relay workspace observation", () => {
     const { code, result } = await f.launch(["--read-only"]).done;
     expect(code).toBe(0);
     expect(result?.readOnlyViolation).toBe(false);
-    expect(result?.briefPath).toBe(path.join(realOut, "brief.txt"));
+    expect(result?.briefPath).toBe(path.join(realpathSync.native(realOut), "brief.txt"));
   });
 
   it("reports unknown coverage for a link whose target is outside the watched roots", async () => {
