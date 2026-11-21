@@ -1,5 +1,5 @@
 ---
-name: agy-delegate
+name: antigravity-mcp
 description: >-
   Delegate implementation or a queue of coding tasks through Antigravity MCP or its bundled CLI
   relay, then review the diff and project gates. Use when the user asks Antigravity or agy to
@@ -13,10 +13,10 @@ compatibility: >-
   `scripts/relay.mjs`, which requires Node.js, git, and a supported authenticated AGY environment.
   The MCP package supports macOS and Linux; use WSL only where the required Linux CLI is available.
 metadata:
-  version: 0.9.0
+  version: 0.9.1
 ---
 
-# Delegate with Antigravity MCP
+# Antigravity MCP
 
 You are the **orchestrator**. This skill lets you hand a bounded coding task to a separate
 **implementer** - the Google Antigravity CLI (`agy`) - then review what it produced and land it

@@ -5,7 +5,7 @@
 <p>
   <a href="https://modelcontextprotocol.io"><img alt="MCP stdio" src="https://img.shields.io/badge/MCP-stdio-85E0C3?style=flat&labelColor=101923"></a>
   <a href="#models-and-plan-availability"><img alt="Gemini 4 Neon" src="https://img.shields.io/badge/Gemini_4-Neon-85E0C3?style=flat&labelColor=101923"></a>
-  <a href="https://github.com/PyModel/claude-agy-mcp/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/PyModel/claude-agy-mcp/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://github.com/PyModel/antigravity-mcp/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/PyModel/antigravity-mcp/actions/workflows/ci.yml/badge.svg"></a>
   <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-85E0C3?style=flat&labelColor=101923"></a>
 </p>
 
@@ -27,7 +27,7 @@
 
 Choose Gemini 4 Neon or another model in your account's live inventory. The bridge resolves model IDs, preserves conversation sessions, reports usage and partial failures, and returns bounded results. This is an independently maintained integration with Antigravity.
 
-**Package transition:** this source is now `@pymodel/antigravity-mcp`. The new npm name was not published as of November 21, 2026; use the [source build](#build) until release. Existing users should read the [migration notes](#migration-from-claude-agy-mcp). The GitHub repository remains `PyModel/claude-agy-mcp`.
+**Package transition:** this source is now `@pymodel/antigravity-mcp`. The new npm name was not published as of November 21, 2026; use the [source build](#build) until release. Existing users should read the [migration notes](#migration-from-claude-agy-mcp). The GitHub repository has been renamed to [PyModel/antigravity-mcp](https://github.com/PyModel/antigravity-mcp).
 
 ## Models and plan availability
 
@@ -190,10 +190,10 @@ npx --package @pymodel/antigravity-mcp antigravity-mcp-install-skills
 
 The package ships two reusable skills. Installing or registering the server exposes its tools; run the skill installer separately to activate the instructions in your host.
 
-| Skill            | What it does                                                                                                              |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `agy-delegation` | Routes bounded research, analysis, reviews, and implementation to the appropriate tool.                                   |
-| `agy-delegate`   | Writes a task brief, dispatches it, reviews the result, and verifies changes. Includes a CLI relay for hosts without MCP. |
+| Skill                                                                | What it does                                                                                                              |
+| -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| [`antigravity-mcp`](skills/antigravity-mcp/SKILL.md)                 | Writes a task brief, dispatches it, reviews the result, and verifies changes. Includes a CLI relay for hosts without MCP. |
+| [`antigravity-mcp-routing`](skills/antigravity-mcp-routing/SKILL.md) | Routes bounded research, analysis, reviews, and implementation to the appropriate tool.                                   |
 
 From the checkout, preview discovery and choose an explicit destination:
 
@@ -204,6 +204,8 @@ node scripts/install-skills.mjs --dir /absolute/path/to/your/agent/skills
 
 Without `--dir`, the installer selects existing agent skill directories; `--list` previews without writing. Use `--force` only when deliberately replacing a symlinked skill. The [client guide](docs/multi-client-support.md#optional-bundled-skills) documents Codex and OpenCode locations and overlapping discovery paths.
 
+Existing `agy-delegate` and `agy-delegation` installations need the [installed-skill migration](#installed-skills). The installer warns about these old folders and leaves them intact.
+
 [AGENTS.md](AGENTS.md) contains shared delegation guidance for coding agents; [CLAUDE.md](CLAUDE.md) points Claude Code to it. Merge relevant guidance into your project's existing instruction files without overwriting unrelated rules.
 
 The raw relay has its own result contract and only watches read-only roots on every OS. It does not inherit the MCP bridge's macOS confinement. Unknown coverage and detected changes are reported explicitly. Use a separate report directory per job; reuse clears old captures and is locked while a run is active.
@@ -213,10 +215,21 @@ The raw relay has its own result contract and only watches read-only roots on ev
 | Identity                | Previous                           | New                                 |
 | ----------------------- | ---------------------------------- | ----------------------------------- |
 | Product                 | Claude AGY MCP                     | Antigravity MCP                     |
+| GitHub repository       | `PyModel/claude-agy-mcp`           | `PyModel/antigravity-mcp`           |
 | npm package             | `@pymodel/claude-agy-mcp`          | `@pymodel/antigravity-mcp`          |
 | Server executable       | `claude-agy-mcp`                   | `antigravity-mcp`                   |
 | Skill installer         | `claude-agy-mcp-install-skills`    | `antigravity-mcp-install-skills`    |
 | MCP registry identifier | `io.github.PyModel/claude-agy-mcp` | `io.github.PyModel/antigravity-mcp` |
+| Workflow skill          | `agy-delegate`                     | `antigravity-mcp`                   |
+| Routing skill           | `agy-delegation`                   | `antigravity-mcp-routing`           |
+
+The GitHub repository rename is complete. For an existing checkout whose `origin` points to this project, update its URL:
+
+```bash
+git remote set-url origin https://github.com/PyModel/antigravity-mcp.git
+```
+
+The repository rename does not publish the new npm package or change the existing `@pymodel/claude-agy-mcp` package. Continue using a source build until the new package is released.
 
 The new package retains both old executable names as aliases. Those aliases identify executables inside the new package: an existing `npx @pymodel/claude-agy-mcp` command still requests the **old npm package**. Update the configured package or point the host at the source build. The new package and registry metadata are prepared in this source revision; merging a change does not itself publish either registry entry.
 
@@ -231,6 +244,19 @@ npm install -g @pymodel/antigravity-mcp
 ```
 
 Uninstalling the npm package does not delete the separate preference or cache files. Explicit source-path or `npx --package` registration does not require a global installation.
+
+### Installed skills
+
+The bundled skill folders and their frontmatter names are now `antigravity-mcp` and `antigravity-mcp-routing`. The package no longer ships `agy-delegate` or `agy-delegation` folders; executable aliases do not alias skill names.
+
+From the current checkout, preview the destinations and install the new folders into the directory used by your host:
+
+```bash
+node scripts/install-skills.mjs --list
+node scripts/install-skills.mjs --dir /absolute/path/to/your/agent/skills
+```
+
+`--list` previews without writing. The installer warns when it finds old `agy-delegate` or `agy-delegation` copies in a selected destination and leaves them intact. Inspect those old folders and preserve any custom instructions or supporting files before migrating them to the new skills. After checking the new installation, remove the old copies yourself to avoid duplicate workflows in the host. Refresh or restart the host and confirm that both new skill names are discoverable.
 
 ### Saved preferences and cooldowns
 
@@ -468,8 +494,8 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) — conventional commits, prettier, and 
 
 ## Contributors
 
-<a href="https://github.com/PyModel/claude-agy-mcp/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=PyModel/claude-agy-mcp" alt="Contributors" />
+<a href="https://github.com/PyModel/antigravity-mcp/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=PyModel/antigravity-mcp" alt="Contributors" />
 </a>
 
 ## License

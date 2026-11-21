@@ -1,4 +1,7 @@
-# Codebase audit: https://github.com/PyModel/claude-agy-mcp.git
+# Codebase audit: PyModel/claude-agy-mcp (historical name)
+
+The repository is now [PyModel/antigravity-mcp](https://github.com/PyModel/antigravity-mcp).
+The baseline paths, branch names, and evidence below retain their original identities.
 
 **Snapshot:** All finding locations and baseline repros refer to clean commit 29f5b5c8d5f4343d1cab33c774f8deda359e64a2. Applied candidate: branch fix/gemini4-routing-and-reliability, version 3.2.0, uncommitted working tree fingerprint 713bd439ecb142417c0e59714158715454aef8231048074abd8485af9796b1b5; see evidence/candidate-snapshot.json. This is not a deployed or published artifact identity. Accepted source-fix implementation is completed; final Linux integration, typecheck/release checks and rebuilt Node 18/24 package smoke passed. Remaining partial completion concerns platform CI and live-provider evaluation.
 

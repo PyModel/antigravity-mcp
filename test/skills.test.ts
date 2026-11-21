@@ -8,6 +8,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  readlinkSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -26,9 +27,11 @@ const names = readdirSync(SKILLS, { withFileTypes: true })
  * rather than a failing build. The installer parses the same frontmatter.
  */
 describe("bundled skills", () => {
-  it("ships at least the delegation routing skill and the delegate workflow", () => {
-    expect(names).toContain("agy-delegate");
-    expect(names).toContain("agy-delegation");
+  it("ships the renamed routing and workflow skills without legacy copies", () => {
+    expect(names).toContain("antigravity-mcp");
+    expect(names).toContain("antigravity-mcp-routing");
+    expect(names).not.toContain("agy-delegate");
+    expect(names).not.toContain("agy-delegation");
   });
 
   it.each(names)("%s has parseable frontmatter with a name and description", (name) => {
@@ -69,7 +72,7 @@ afterEach(() => {
 function installerFixture() {
   const root = tempDir();
   const scripts = path.join(root, "scripts");
-  const source = path.join(root, "skills", "agy-delegate");
+  const source = path.join(root, "skills", "antigravity-mcp");
   const target = path.join(root, "target");
   mkdirSync(scripts);
   mkdirSync(source, { recursive: true });
@@ -78,9 +81,9 @@ function installerFixture() {
   cpSync(INSTALLER, installer);
   writeFileSync(
     path.join(source, "SKILL.md"),
-    "---\nname: agy-delegate\ndescription: Fixture.\n---\nnew skill\n",
+    "---\nname: antigravity-mcp\ndescription: Fixture.\n---\nnew skill\n",
   );
-  const old = path.join(target, "agy-delegate");
+  const old = path.join(target, "antigravity-mcp");
   mkdirSync(old);
   writeFileSync(path.join(old, "SKILL.md"), "previous skill");
   writeFileSync(path.join(old, "old-only.txt"), "previous supporting file");
@@ -104,7 +107,7 @@ describe("install-skills", () => {
     expect(absent.stdout).not.toContain(`${target} (OpenCode)`);
     expect(existsSync(xdgConfig)).toBe(false);
 
-    const existing = path.join(target, "agy-delegate");
+    const existing = path.join(target, "antigravity-mcp");
     mkdirSync(existing, { recursive: true });
     writeFileSync(path.join(existing, "SKILL.md"), "keep this existing skill");
 
@@ -113,22 +116,103 @@ describe("install-skills", () => {
       `${target} (OpenCode)`,
     );
     expect(readFileSync(path.join(existing, "SKILL.md"), "utf8")).toBe("keep this existing skill");
-    expect(readdirSync(target)).toEqual(["agy-delegate"]);
+    expect(readdirSync(target)).toEqual(["antigravity-mcp"]);
     expect(readdirSync(existing)).toEqual(["SKILL.md"]);
   });
 
   it("refuses to replace a symlinked skill, and replaces it under --force", async () => {
     const dir = tempDir();
-    const linked = path.join(dir, "agy-delegate");
-    symlinkSync(path.join(SKILLS, "agy-delegate"), linked, "dir");
+    const linked = path.join(dir, "antigravity-mcp");
+    symlinkSync(path.join(SKILLS, "antigravity-mcp"), linked, "dir");
 
     const guarded = await run(process.execPath, [INSTALLER, "--dir", dir]);
-    expect(guarded.stdout).toContain("skipped agy-delegate");
+    expect(guarded.stdout).toContain("skipped antigravity-mcp");
     expect(lstatSync(linked).isSymbolicLink()).toBe(true);
 
     const forced = await run(process.execPath, [INSTALLER, "--dir", dir, "--force"]);
-    expect(forced.stdout).toContain("installed agy-delegate");
+    expect(forced.stdout).toContain("installed antigravity-mcp");
     expect(lstatSync(linked).isSymbolicLink()).toBe(false);
+  });
+
+  it.each([false, true])(
+    "previews legacy migration and preserves custom copies and symlinks during install (force=%s)",
+    async (force) => {
+      const root = tempDir();
+      const target = path.join(root, "skills");
+      const previousWorkflow = path.join(target, "agy-delegate");
+      const previousRouting = path.join(target, "agy-delegation");
+      const checkout = path.join(root, "custom-routing-checkout");
+      mkdirSync(previousWorkflow, { recursive: true });
+      mkdirSync(checkout);
+      writeFileSync(path.join(previousWorkflow, "SKILL.md"), "custom legacy workflow");
+      writeFileSync(path.join(previousWorkflow, "notes.txt"), "keep my custom notes");
+      writeFileSync(path.join(checkout, "SKILL.md"), "custom legacy routing");
+      symlinkSync(checkout, previousRouting, "dir");
+      const args = ["--dir", target, ...(force ? ["--force"] : [])];
+      const assertLegacyUnchanged = () => {
+        expect(readFileSync(path.join(previousWorkflow, "SKILL.md"), "utf8")).toBe(
+          "custom legacy workflow",
+        );
+        expect(readFileSync(path.join(previousWorkflow, "notes.txt"), "utf8")).toBe(
+          "keep my custom notes",
+        );
+        expect(readdirSync(previousWorkflow).sort()).toEqual(["SKILL.md", "notes.txt"]);
+        expect(lstatSync(previousRouting).isSymbolicLink()).toBe(true);
+        expect(readlinkSync(previousRouting)).toBe(checkout);
+        expect(readFileSync(path.join(checkout, "SKILL.md"), "utf8")).toBe("custom legacy routing");
+        expect(readdirSync(checkout)).toEqual(["SKILL.md"]);
+      };
+      const assertNotice = (stdout: string) => {
+        expect(stdout).toContain(`Legacy skills in ${target}:`);
+        expect(stdout).toContain("agy-delegate → antigravity-mcp");
+        expect(stdout).toContain("agy-delegation → antigravity-mcp-routing");
+        expect(stdout).toContain("left untouched, including with --force");
+        expect(stdout).toContain("avoid loading duplicate skills");
+      };
+
+      const preview = await run(process.execPath, [INSTALLER, ...args, "--list"]);
+      assertNotice(preview.stdout);
+      assertLegacyUnchanged();
+      expect(readdirSync(target).sort()).toEqual(["agy-delegate", "agy-delegation"]);
+
+      const installed = await run(process.execPath, [INSTALLER, ...args]);
+      assertNotice(installed.stdout);
+      assertLegacyUnchanged();
+      for (const name of ["antigravity-mcp", "antigravity-mcp-routing"]) {
+        expect(installed.stdout).toContain(`installed ${name}`);
+        expect(readFileSync(path.join(target, name, "SKILL.md"), "utf8")).toMatch(
+          new RegExp(`^name: ${name}$`, "m"),
+        );
+      }
+      expect(readdirSync(target).sort()).toEqual(
+        ["agy-delegate", "agy-delegation", "antigravity-mcp", "antigravity-mcp-routing"].sort(),
+      );
+    },
+  );
+
+  it("reports and preserves a dangling legacy symlink without following it, even with --force", async () => {
+    const root = tempDir();
+    const target = path.join(root, "skills");
+    const missing = path.join(root, "missing-checkout");
+    const previous = path.join(target, "agy-delegate");
+    mkdirSync(target);
+    symlinkSync(missing, previous, "dir");
+
+    for (const preview of [true, false]) {
+      const { stdout } = await run(process.execPath, [
+        INSTALLER,
+        "--dir",
+        target,
+        "--force",
+        ...(preview ? ["--list"] : []),
+      ]);
+      expect(stdout).toContain("agy-delegate → antigravity-mcp");
+      expect(lstatSync(previous).isSymbolicLink()).toBe(true);
+      expect(readlinkSync(previous)).toBe(missing);
+      expect(existsSync(missing)).toBe(false);
+    }
+    expect(existsSync(path.join(target, "antigravity-mcp", "SKILL.md"))).toBe(true);
+    expect(existsSync(path.join(target, "antigravity-mcp-routing", "SKILL.md"))).toBe(true);
   });
 
   it("installs every bundled skill into a directory that has none", async () => {
@@ -146,7 +230,7 @@ describe("install-skills", () => {
     await run(process.execPath, [f.installer, "--dir", f.target]);
     expect(readFileSync(path.join(f.old, "new.txt"), "utf8")).toBe("new supporting file");
     expect(existsSync(path.join(f.old, "old-only.txt"))).toBe(false);
-    expect(readdirSync(f.target)).toEqual(["agy-delegate"]);
+    expect(readdirSync(f.target)).toEqual(["antigravity-mcp"]);
   });
 
   it.skipIf(process.platform === "win32")(
@@ -161,7 +245,7 @@ describe("install-skills", () => {
       expect(readFileSync(path.join(f.old, "old-only.txt"), "utf8")).toBe(
         "previous supporting file",
       );
-      expect(readdirSync(f.target)).toEqual(["agy-delegate"]);
+      expect(readdirSync(f.target)).toEqual(["antigravity-mcp"]);
     },
   );
 
@@ -187,7 +271,7 @@ describe("install-skills", () => {
     ).rejects.toMatchObject({ code: 1 });
     expect(readFileSync(path.join(f.old, "SKILL.md"), "utf8")).toBe("previous skill");
     expect(existsSync(path.join(f.old, "old-only.txt"))).toBe(true);
-    expect(readdirSync(f.target)).toEqual(["agy-delegate"]);
+    expect(readdirSync(f.target)).toEqual(["antigravity-mcp"]);
   });
 
   it("retains a recovery copy when publication and rollback both fail", async () => {
@@ -213,7 +297,9 @@ describe("install-skills", () => {
       code: 1,
       stderr: expect.stringContaining("the previous skill is preserved at"),
     });
-    const staging = readdirSync(f.target).find((name) => name.startsWith(".agy-delegate.install-"));
+    const staging = readdirSync(f.target).find((name) =>
+      name.startsWith(".antigravity-mcp.install-"),
+    );
     expect(staging).toBeTruthy();
     expect(readFileSync(path.join(f.target, staging!, "previous", "SKILL.md"), "utf8")).toBe(
       "previous skill",

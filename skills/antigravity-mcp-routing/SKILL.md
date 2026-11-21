@@ -1,9 +1,9 @@
 ---
-name: agy-delegation
+name: antigravity-mcp-routing
 description: Delegate large-file analysis (>200 lines), multi-file research (>3 files), deep git/grep searches, web lookups, and adversarial reviews through Antigravity MCP to keep source material out of the host's context.
 ---
 
-# Research with Antigravity MCP
+# Antigravity MCP routing
 
 Use Antigravity MCP to send bounded research to the local Antigravity CLI (`agy`).
 The source material stays in the delegated conversation; the answer returns to the host.
@@ -28,7 +28,7 @@ Do **not** delegate small single-file edits, questions you can already answer fr
 loaded context, or work needing tools only you have.
 
 For the full delegate-and-review workflow - writing a brief agy can execute blind,
-then reviewing its diff and landing it yourself - use the `agy-delegate` skill.
+then reviewing its diff and landing it yourself - use the `antigravity-mcp` skill.
 
 ## Reading a response
 
@@ -86,9 +86,9 @@ Orchestrator's `(Carbon)`, `(Neon)`, or `(Argon)` labels as efforts.
 
 Before a long run, configure the host's execution timeout to allow the bridge's default
 3600-second ceiling, its 15-second cold-run grace, and result delivery. Use the
-[client-specific timeout settings](https://github.com/PyModel/claude-agy-mcp/blob/main/docs/multi-client-support.md#timeout-settings)
+[client-specific timeout settings](https://github.com/PyModel/antigravity-mcp/blob/main/docs/multi-client-support.md#timeout-settings)
 and preserve the documented units; a host timeout can discard the recovery response.
 
-The raw CLI relay supplied by `agy-delegate` is a separate fallback. Its plan mode is
+The raw CLI relay supplied by `antigravity-mcp` is a separate fallback. Its plan mode is
 advisory on every platform, and its report distinguishes incomplete coverage from a
 verified snapshot comparison. It does not inherit the bridge's macOS confinement.

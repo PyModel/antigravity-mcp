@@ -11,8 +11,10 @@ bundled CLI relay described in the [README](../README.md#bundled-skills).
 The source package is now named `@pymodel/antigravity-mcp`. **That npm name was not
 published at verification time.** Start with the local build below. The
 [package commands](#after-the-renamed-package-is-published) apply only after a
-release under the new name. The repository remains
-[PyModel/claude-agy-mcp](https://github.com/PyModel/claude-agy-mcp).
+release under the new name. The GitHub repository has been renamed to
+[PyModel/antigravity-mcp](https://github.com/PyModel/antigravity-mcp). Existing
+checkouts can update their remote using the
+[migration instructions](../README.md#migration-from-claude-agy-mcp).
 
 ## Start with the local build
 
@@ -240,10 +242,19 @@ invent an effort suffix or assume the host's own model is available in AGY.
 ## Optional bundled skills
 
 The MCP registration exposes tools; skill installation supplies reusable
-delegation instructions. From the checkout, use an explicit destination when
-installing the bundled skills:
+delegation instructions. The bundled skill names and directories are:
+
+| Skill                                                                   | Purpose                                           |
+| ----------------------------------------------------------------------- | ------------------------------------------------- |
+| [`antigravity-mcp`](../skills/antigravity-mcp/SKILL.md)                 | Complete delegation workflow and CLI relay        |
+| [`antigravity-mcp-routing`](../skills/antigravity-mcp-routing/SKILL.md) | Companion guidance for choosing a delegation tool |
+
+From the checkout, preview discovery and use an explicit destination when
+installing the new skill folders:
 
 ```bash
+node scripts/install-skills.mjs --list
+
 # Codex: user scope.
 node scripts/install-skills.mjs --dir "$HOME/.agents/skills"
 
@@ -259,11 +270,19 @@ Keep the complete skill directory, including supporting scripts. See
 [OpenCode skill discovery](https://opencode.ai/docs/skills/), and the README's
 [bundled skills](../README.md#bundled-skills).
 
+If your destination still contains `agy-delegate` or `agy-delegation`, the
+installer warns and leaves those copies intact. Preserve any customizations,
+verify the new skills, then remove the old copies yourself. `--list` only
+previews and does not write. See the
+[installed-skill migration](../README.md#installed-skills) for the full sequence.
+
 ## After the renamed package is published
 
 **Do not use these commands before `@pymodel/antigravity-mcp` is published.** The
-local build above is the available setup path at the verification date. Publishing
-the new source package does not rename the existing GitHub repository.
+local build above is the available setup path at the verification date. The
+GitHub repository is already [PyModel/antigravity-mcp](https://github.com/PyModel/antigravity-mcp);
+npm publication is a separate release step, and the old npm package is unaffected
+by the repository rename.
 
 After release, these commands register the canonical npm package. For Pi, Codex,
 and OpenCode, keep the timeout settings from their configuration sections;

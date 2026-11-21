@@ -20,7 +20,7 @@ const RELAY = path.join(
   import.meta.dirname,
   "..",
   "skills",
-  "agy-delegate",
+  "antigravity-mcp",
   "scripts",
   "relay.mjs",
 );

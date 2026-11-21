@@ -13,7 +13,7 @@ channel. Include the package name, version, or source commit when reporting an i
 
 ## Reporting a vulnerability
 
-Report privately via [GitHub Security Advisories](https://github.com/PyModel/claude-agy-mcp/security/advisories/new). Do not open a public issue.
+Report privately via [GitHub Security Advisories](https://github.com/PyModel/antigravity-mcp/security/advisories/new). Do not open a public issue.
 
 Expect an acknowledgement within 7 days and a fix or mitigation plan within 30.
 

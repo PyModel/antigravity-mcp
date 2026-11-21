@@ -1,6 +1,6 @@
 # Gemini 4 routing, cost, and release decisions
 
-Research checked **November 21, 2026**. Code baseline: [`29f5b5c8d5f4343d1cab33c774f8deda359e64a2`](https://github.com/PyModel/claude-agy-mcp/tree/29f5b5c8d5f4343d1cab33c774f8deda359e64a2). Implementation candidate: **3.2.0**, subject to review and release; no npm publication or live paid inference is implied.
+Research checked **November 21, 2026**. Code baseline: [`29f5b5c8d5f4343d1cab33c774f8deda359e64a2`](https://github.com/PyModel/antigravity-mcp/tree/29f5b5c8d5f4343d1cab33c774f8deda359e64a2). Implementation candidate: **3.2.0**, subject to review and release; no npm publication or live paid inference is implied.
 
 ## Decision
 

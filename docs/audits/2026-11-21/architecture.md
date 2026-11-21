@@ -1,6 +1,6 @@
 # Architecture and evidence boundaries
 
-This appendix accompanies [the generated audit](report.md) and [the machine-readable record](audit.json). Baseline source is [`29f5b5c8d5f4343d1cab33c774f8deda359e64a2`](https://github.com/PyModel/claude-agy-mcp/tree/29f5b5c8d5f4343d1cab33c774f8deda359e64a2). Findings cite that revision; implementation status describes the 3.2.0 candidate separately.
+This appendix accompanies [the generated audit](report.md) and [the machine-readable record](audit.json). Baseline source is [`29f5b5c8d5f4343d1cab33c774f8deda359e64a2`](https://github.com/PyModel/antigravity-mcp/tree/29f5b5c8d5f4343d1cab33c774f8deda359e64a2). Findings cite that revision; implementation status describes the 3.2.0 candidate separately.
 
 ## System and flow
 

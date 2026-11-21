@@ -3,7 +3,7 @@
   "name": "io.github.PyModel/antigravity-mcp",
   "description": "Connect coding agents to Antigravity models for research, code review, and implementation.",
   "repository": {
-    "url": "https://github.com/PyModel/claude-agy-mcp",
+    "url": "https://github.com/PyModel/antigravity-mcp",
     "source": "github"
   },
   "version": "3.2.0",
