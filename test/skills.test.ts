@@ -1,12 +1,16 @@
-import { describe, it, expect } from "vitest";
-import { execFile } from "node:child_process";
+import { afterEach, describe, it, expect } from "vitest";
+import { execFile, execFileSync } from "node:child_process";
 import {
   existsSync,
+  cpSync,
   lstatSync,
+  mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
+  rmSync,
   symlinkSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -52,6 +56,36 @@ describe("bundled skills", () => {
 
 const run = promisify(execFile);
 const INSTALLER = path.join(import.meta.dirname, "..", "scripts", "install-skills.mjs");
+const temporary: string[] = [];
+function tempDir() {
+  const dir = mkdtempSync(path.join(tmpdir(), "agy-skills-"));
+  temporary.push(dir);
+  return dir;
+}
+afterEach(() => {
+  for (const dir of temporary.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
+
+function installerFixture() {
+  const root = tempDir();
+  const scripts = path.join(root, "scripts");
+  const source = path.join(root, "skills", "agy-delegate");
+  const target = path.join(root, "target");
+  mkdirSync(scripts);
+  mkdirSync(source, { recursive: true });
+  mkdirSync(target);
+  const installer = path.join(scripts, "install-skills.mjs");
+  cpSync(INSTALLER, installer);
+  writeFileSync(
+    path.join(source, "SKILL.md"),
+    "---\nname: agy-delegate\ndescription: Fixture.\n---\nnew skill\n",
+  );
+  const old = path.join(target, "agy-delegate");
+  mkdirSync(old);
+  writeFileSync(path.join(old, "SKILL.md"), "previous skill");
+  writeFileSync(path.join(old, "old-only.txt"), "previous supporting file");
+  return { root, source, target, old, installer };
+}
 
 /**
  * The installer replaces a skill directory outright. A symlink there means the
@@ -61,7 +95,7 @@ const INSTALLER = path.join(import.meta.dirname, "..", "scripts", "install-skill
  */
 describe("install-skills", () => {
   it("refuses to replace a symlinked skill, and replaces it under --force", async () => {
-    const dir = mkdtempSync(path.join(tmpdir(), "agy-skills-"));
+    const dir = tempDir();
     const linked = path.join(dir, "agy-delegate");
     symlinkSync(path.join(SKILLS, "agy-delegate"), linked, "dir");
 
@@ -75,12 +109,111 @@ describe("install-skills", () => {
   });
 
   it("installs every bundled skill into a directory that has none", async () => {
-    const dir = mkdtempSync(path.join(tmpdir(), "agy-skills-"));
+    const dir = tempDir();
     const { stdout } = await run(process.execPath, [INSTALLER, "--dir", dir]);
     for (const name of names) {
       expect(stdout).toContain(`installed ${name}`);
       expect(existsSync(path.join(dir, name, "SKILL.md"))).toBe(true);
     }
+  });
+
+  it("publishes a complete replacement and removes obsolete files after copying", async () => {
+    const f = installerFixture();
+    writeFileSync(path.join(f.source, "new.txt"), "new supporting file");
+    await run(process.execPath, [f.installer, "--dir", f.target]);
+    expect(readFileSync(path.join(f.old, "new.txt"), "utf8")).toBe("new supporting file");
+    expect(existsSync(path.join(f.old, "old-only.txt"))).toBe(false);
+    expect(readdirSync(f.target)).toEqual(["agy-delegate"]);
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "preserves the installed skill when copying the replacement fails",
+    async () => {
+      const f = installerFixture();
+      execFileSync("mkfifo", [path.join(f.source, "uncopyable-pipe")]);
+      await expect(run(process.execPath, [f.installer, "--dir", f.target])).rejects.toMatchObject({
+        code: 1,
+      });
+      expect(readFileSync(path.join(f.old, "SKILL.md"), "utf8")).toBe("previous skill");
+      expect(readFileSync(path.join(f.old, "old-only.txt"), "utf8")).toBe(
+        "previous supporting file",
+      );
+      expect(readdirSync(f.target)).toEqual(["agy-delegate"]);
+    },
+  );
+
+  it("rolls back the old skill if publication fails after the copy", async () => {
+    const f = installerFixture();
+    const loader = path.join(f.root, "publication-fault.mjs");
+    writeFileSync(
+      loader,
+      [
+        "import fs from 'node:fs/promises';",
+        "import { syncBuiltinESMExports } from 'node:module';",
+        "import path from 'node:path';",
+        "const rename = fs.rename;",
+        "fs.rename = async (source, dest) => {",
+        "  if (path.basename(source) === 'next') throw Object.assign(new Error('fixture publication failure'), { code: 'EIO' });",
+        "  return rename(source, dest);",
+        "};",
+        "syncBuiltinESMExports();",
+      ].join("\n"),
+    );
+    await expect(
+      run(process.execPath, ["--import", loader, f.installer, "--dir", f.target]),
+    ).rejects.toMatchObject({ code: 1 });
+    expect(readFileSync(path.join(f.old, "SKILL.md"), "utf8")).toBe("previous skill");
+    expect(existsSync(path.join(f.old, "old-only.txt"))).toBe(true);
+    expect(readdirSync(f.target)).toEqual(["agy-delegate"]);
+  });
+
+  it("retains a recovery copy when publication and rollback both fail", async () => {
+    const f = installerFixture();
+    const loader = path.join(f.root, "rollback-fault.mjs");
+    writeFileSync(
+      loader,
+      [
+        "import fs from 'node:fs/promises';",
+        "import { syncBuiltinESMExports } from 'node:module';",
+        "import path from 'node:path';",
+        "const rename = fs.rename;",
+        "fs.rename = async (source, dest) => {",
+        "  if (['next', 'previous'].includes(path.basename(source))) throw Object.assign(new Error('fixture rename failure'), { code: 'EIO' });",
+        "  return rename(source, dest);",
+        "};",
+        "syncBuiltinESMExports();",
+      ].join("\n"),
+    );
+    await expect(
+      run(process.execPath, ["--import", loader, f.installer, "--dir", f.target]),
+    ).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining("the previous skill is preserved at"),
+    });
+    const staging = readdirSync(f.target).find((name) => name.startsWith(".agy-delegate.install-"));
+    expect(staging).toBeTruthy();
+    expect(readFileSync(path.join(f.target, staging!, "previous", "SKILL.md"), "utf8")).toBe(
+      "previous skill",
+    );
+  });
+
+  it.each([
+    ["--list", "--dir"],
+    ["--list", "--dir", "--force"],
+    ["--list", "--unknown"],
+    ["--list", "--dir", ""],
+    ["--list", "--dir", "/first", "--dir", "/second"],
+  ])("rejects malformed arguments before any installation: %j", async (...args) => {
+    // --list also keeps older buggy installer versions from writing an auto-detected home.
+    await expect(run(process.execPath, [INSTALLER, ...args])).rejects.toMatchObject({ code: 2 });
+  });
+
+  it("refuses to install over its own source", async () => {
+    const f = installerFixture();
+    await expect(
+      run(process.execPath, [f.installer, "--dir", path.dirname(f.source)]),
+    ).rejects.toMatchObject({ code: 1 });
+    expect(readFileSync(path.join(f.source, "SKILL.md"), "utf8")).toContain("new skill");
   });
 });
 

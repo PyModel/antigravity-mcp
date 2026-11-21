@@ -19,14 +19,45 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
       - run: npm test
       - run: npm run build
+      - run: npm run check:release
+
+  package:
+    name: package (Node ${{ matrix.node }})
+    strategy:
+      matrix: { node: [18, 24] }
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with: { node-version: 24, cache: npm }
+      - run: npm ci
+      - run: npm run build
+      - run: npm run check:release
+      - uses: actions/setup-node@v7
+        with: { node-version: "${{ matrix.node }}" }
+      - run: npm run test:package
+      - run: docker build -t claude-agy-mcp-smoke .
+        if: matrix.node == 24
 
   # The one status the main branch ruleset requires; green only when every
   # platform in the matrix is.
   test:
-    needs: suite
+    if: ${{ always() }}
+    needs: [suite, package, commitlint]
     runs-on: ubuntu-latest
     steps:
-      - run: echo "all platforms passed"
+      - name: Require every gate to succeed
+        env:
+          SUITE_RESULT: ${{ needs.suite.result }}
+          PACKAGE_RESULT: ${{ needs.package.result }}
+          COMMITLINT_RESULT: ${{ needs.commitlint.result }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          test "$SUITE_RESULT" = success
+          test "$PACKAGE_RESULT" = success
+          if [ "$EVENT_NAME" = pull_request ]; then
+            test "$COMMITLINT_RESULT" = success
+          fi
 
   commitlint:
     if: github.event_name == 'pull_request'

@@ -18,7 +18,11 @@ function agyWhere(quotaModels: string[] = [], stallModels: string[] = []) {
   return fakeAgy((args) => {
     const model = valueOf(args, "--model");
     if (model && quotaModels.includes(model))
-      return { log: `${LOG_429}\n`, answer: "", exitCode: 0 };
+      return {
+        log: `${LOG_429}\n`,
+        envelope: { status: "ERROR", error: "RESOURCE_EXHAUSTED: model quota exhausted" },
+        exitCode: 1,
+      };
     if (model && stallModels.includes(model)) return { neverExit: true, answer: "partial output" };
     return { answer: "the answer" };
   });
@@ -44,7 +48,7 @@ describe("Delegator", () => {
     const agy = agyWhere();
     const d = await delegatorFor(agy).run(request("delegate", { prompt: "do x" }));
     expect(d.output).toBe("the answer");
-    expect(d.model).toBe("Gemini 3.8 Flash (High)");
+    expect(d.model).toBe("gemini-3.8-flash-high");
     expect(d.attempts).toEqual([]);
     expect(d.timedOut).toBe(false);
     expect(d.warm).toBe(false);
@@ -71,46 +75,42 @@ describe("Delegator", () => {
     expect(d.sessionId).toBeUndefined();
   });
 
-  it("fails over to the next chain model on quota exhaustion", async () => {
-    const agy = agyWhere(["Gemini 3.8 Flash (High)"]);
-    const d = await delegatorFor(agy).run(request("web_lookup", { query: "docs" }));
-    expect(agy.runs.map(agy.modelOf)).toEqual([
-      "Gemini 3.8 Flash (High)",
-      "Gemini 3.8 Flash (Medium)",
-    ]);
-    expect(d.model).toBe("Gemini 3.8 Flash (Medium)");
-    expect(d.attempts).toEqual(["Gemini 3.8 Flash (High): quota exhausted (resets in 4h24m)"]);
+  it("records quota but does not replay a dispatched turn on another model", async () => {
+    const agy = agyWhere(["gemini-3.8-flash-high"]);
+    await expect(delegatorFor(agy).run(request("web_lookup", { query: "docs" }))).rejects.toThrow(
+      /Not failed over/,
+    );
+    expect(agy.runs.map(agy.modelOf)).toEqual(["gemini-3.8-flash-high"]);
   });
 
   it("keeps the fallback's own tier when the pinned model carries a different effort", async () => {
     // A set_model choice of Flash (High) at high effort must not turn the
     // Flash (Medium) fallback back into the Flash (High) that just hit its quota.
-    const agy = agyWhere(["Gemini 3.8 Flash (High)"]);
+    const agy = agyWhere(["gemini-3.8-flash-high"]);
     const delegator = delegatorFor(agy);
     await delegator.setPreference("gemini-flash@latest-high", "high");
-    const d = await delegator.run(request("web_lookup", { query: "docs" }));
-    expect(agy.runs.map(agy.modelOf)).toEqual([
-      "Gemini 3.8 Flash (High)",
-      "Gemini 3.8 Flash (Medium)",
-    ]);
-    expect(d.model).toBe("Gemini 3.8 Flash (Medium)");
+    await expect(delegator.run(request("web_lookup", { query: "docs" }))).rejects.toThrow(
+      /Not failed over/,
+    );
+    const d = await delegator.run(request("web_lookup", { query: "different independent task" }));
+    expect(agy.runs.map(agy.modelOf)).toEqual(["gemini-3.8-flash-high", "gemini-3.8-flash-medium"]);
+    expect(d.model).toBe("gemini-3.8-flash-medium");
   });
 
   it("cools down the model it actually sent, not the name it re-tiered from", async () => {
-    // Pinned Flash (High) at low effort runs as Flash (Low)... which this listing
-    // lacks, so it stays Flash (High); a medium pin does re-tier and must cool Medium.
-    const agy = agyWhere(["Gemini 3.8 Flash (Medium)"]);
+    // A deliberate family+effort choice selects a listed sibling; exact IDs never re-tier.
+    const agy = agyWhere(["gemini-3.8-flash-medium"]);
     const delegator = delegatorFor(agy);
     const err = await delegator
       .run({
         ...request("web_lookup", { query: "x" }),
-        model: "Gemini 3.8 Flash (High)",
+        model: "gemini-flash@latest-high",
         effort: "medium",
       })
       .catch((e: Error) => e);
-    expect((err as Error).message).toMatch(/quota-exhausted/);
-    expect(agy.runs.map(agy.modelOf)).toEqual(["Gemini 3.8 Flash (Medium)"]);
-    expect(delegator.status().cooldowns.map((c) => c.model)).toEqual(["Gemini 3.8 Flash (Medium)"]);
+    expect((err as Error).message).toMatch(/Not failed over/);
+    expect(agy.runs.map(agy.modelOf)).toEqual(["gemini-3.8-flash-medium"]);
+    expect(delegator.status().cooldowns.map((c) => c.model)).toEqual(["gemini-3.8-flash-medium"]);
   });
 
   it("does NOT fail over when the failure is the request's fault, not the model's", async () => {
@@ -125,24 +125,33 @@ describe("Delegator", () => {
   });
 
   it("skips a cooling model on the next call without spawning it", async () => {
-    const agy = agyWhere(["Gemini 3.8 Flash (High)"]);
+    const agy = agyWhere(["gemini-3.8-flash-high"]);
     const delegator = delegatorFor(agy);
-    await delegator.run(request("web_lookup", { query: "first" }));
+    await expect(delegator.run(request("web_lookup", { query: "first" }))).rejects.toThrow(
+      /Not failed over/,
+    );
     const second = await delegator.run(request("web_lookup", { query: "second" }));
-    expect(agy.runs).toHaveLength(3);
-    expect(agy.modelOf(agy.runs[2]!)).toBe("Gemini 3.8 Flash (Medium)");
+    expect(agy.runs).toHaveLength(2);
+    expect(agy.modelOf(agy.runs[1]!)).toBe("gemini-3.8-flash-medium");
     expect(second.attempts).toEqual([
-      expect.stringMatching(/Gemini 3\.8 Flash \(High\): quota cooldown, .* left/),
+      expect.stringMatching(/gemini-3\.8-flash-high: quota cooldown, .* left/),
     ]);
   });
 
   it("throws with every reset time when the whole chain is exhausted", async () => {
-    const agy = agyWhere(["Gemini 3.8 Flash (Medium)", "Gemini 3.8 Flash (High)"]);
-    const err = await delegatorFor(agy)
+    const agy = agyWhere(["gemini-3.8-flash-medium", "gemini-3.8-flash-high"]);
+    const delegator = delegatorFor(agy);
+    await expect(delegator.run(request("web_lookup", { query: "first" }))).rejects.toThrow(
+      /Not failed over/,
+    );
+    await expect(delegator.run(request("web_lookup", { query: "second" }))).rejects.toThrow(
+      /Not failed over/,
+    );
+    const err = await delegator
       .run(request("web_lookup", { query: "docs" }))
       .catch((e: Error) => e);
     expect((err as Error).message).toMatch(/quota-exhausted or cooling down/);
-    expect((err as Error).message).toContain("4h24m");
+    expect((err as Error).message).toContain("quota cooldown");
   });
 
   it("reports a degraded resolution as a note", async () => {
@@ -172,24 +181,24 @@ describe("Delegator", () => {
     const d = await delegatorFor(agy).run({
       ...request("follow_up", { session_id: "abc", question: "critique that" }),
       conversationId: "abc",
-      model: "Claude Opus 4.6 (Thinking)",
+      model: "claude-opus-4-6-thinking",
     });
     expect(valueOf(agy.runs[0]!, "--conversation")).toBe("abc");
-    expect(valueOf(agy.runs[0]!, "--model")).toBe("Claude Opus 4.6 (Thinking)");
-    expect(d.model).toBe("Claude Opus 4.6 (Thinking)");
+    expect(valueOf(agy.runs[0]!, "--model")).toBe("claude-opus-4-6-thinking");
+    expect(d.model).toBe("claude-opus-4-6-thinking");
   });
 
   it("honours a caller-pinned model over the tool's chain", async () => {
     const agy = agyWhere();
     const d = await delegatorFor(agy).run({
       ...request("delegate", { prompt: "x" }),
-      model: "Gemini 3.1 Pro (High)",
+      model: "gemini-3.1-pro-high",
     });
-    expect(d.model).toBe("Gemini 3.1 Pro (High)");
+    expect(d.model).toBe("gemini-3.1-pro-high");
   });
 
   it("marks a run that hit the deadline instead of failing over", async () => {
-    const agy = agyWhere([], ["Gemini 3.8 Flash (High)"]);
+    const agy = agyWhere([], ["gemini-3.8-flash-high"]);
     const d = await delegatorFor(agy).run({
       ...request("delegate", { prompt: "x" }),
       timeoutSec: 0.05,
@@ -202,7 +211,7 @@ describe("Delegator", () => {
   });
 
   it("propagates cancellation instead of trying the next model", async () => {
-    const agy = agyWhere([], ["Gemini 3.8 Flash (High)"]);
+    const agy = agyWhere([], ["gemini-3.8-flash-high"]);
     const ac = new AbortController();
     const p = delegatorFor(agy).run({ ...request("delegate", { prompt: "x" }), signal: ac.signal });
     setTimeout(() => ac.abort(), 10);
@@ -417,22 +426,24 @@ describe("Delegator warm sessions", () => {
     delegator.shutdown();
   });
 
-  it("re-runs cold a follow-up whose resident process died after receiving it, when the tree is unchanged", async () => {
-    // Warm turns are plan mode. With the tree provably untouched, a cold re-run
-    // cannot repeat an effect, so the caller still gets an answer.
+  it("does not replay an uncertain warm turn even when the tree is unchanged", async () => {
+    // Filesystem equality cannot prove there were no external effects.
     const agy = agyWhere();
     const delegator = delegatorFor(
       agy,
-      { warmSessions: true },
+      { warmSessions: true, budgetTokens: 50 },
       {
         spawnSession: residentAgy("dies").spawnSession,
         snapshot: async () => ({ method: "scan" as const, digest: "same" }),
       },
     );
-    const d = await delegator.run(followUp());
-    expect(d.output).toBe("the answer");
-    expect(d.attempts[0]).toMatch(/died after the turn was sent/);
-    expect(agy.runs).toHaveLength(1);
+    await expect(delegator.run(followUp())).rejects.toThrow(/may or may not have run/);
+    expect(agy.runs).toHaveLength(0);
+    expect(delegator.status().usage[0]?.unknownRuns).toBe(1);
+    await expect(delegator.run(request("delegate", { prompt: "another task" }))).rejects.toThrow(
+      /did not report complete token usage/,
+    );
+    expect(agy.runs).toHaveLength(0);
     delegator.shutdown();
   });
 
@@ -482,8 +493,11 @@ describe("Delegator warm sessions", () => {
     delegator.shutdown();
   });
 
-  it("runs cold when the follow-up pins a model, an effort, or asks to write", async () => {
-    for (const extra of [{ model: "Gemini 3.1 Pro (High)" }, { effort: "low" as const }]) {
+  it("runs cold when the follow-up pins a model or asks to write", async () => {
+    for (const extra of [
+      { model: "gemini-3.1-pro-high" },
+      { model: "gemini-pro@latest", effort: "low" as const },
+    ]) {
       const agy = agyWhere();
       const resident = residentAgy();
       const delegator = delegatorFor(
@@ -550,13 +564,15 @@ describe("Delegator warm sessions", () => {
 
 describe("Delegator.status", () => {
   it("reports spend, cooldowns and the agy it probed", async () => {
-    const agy = agyWhere(["Gemini 3.8 Flash (High)"]);
+    const agy = agyWhere(["gemini-3.8-flash-high"]);
     const delegator = delegatorFor(agy);
-    await delegator.run(request("web_lookup", { query: "x" }));
+    await expect(delegator.run(request("web_lookup", { query: "x" }))).rejects.toThrow(
+      /Not failed over/,
+    );
     const s = delegator.status();
     expect(s.agyVersion).toBe("1.2.0");
     expect(s.spent).toBeGreaterThan(0);
-    expect(s.cooldowns.map((c) => c.model)).toEqual(["Gemini 3.8 Flash (High)"]);
+    expect(s.cooldowns.map((c) => c.model)).toEqual(["gemini-3.8-flash-high"]);
     expect(s.depth).toBe(0);
   });
 });
@@ -564,13 +580,13 @@ describe("Delegator.status", () => {
 describe("Delegator.runMany", () => {
   it("reports a failed leg without failing the others", async () => {
     const agy = fakeAgy((args) =>
-      valueOf(args, "--model") === "Gemini 3.1 Pro (High)"
+      valueOf(args, "--model") === "gemini-3.1-pro-high"
         ? { envelope: { status: "ERROR", error: "boom" }, exitCode: 1 }
         : { answer: "fine" },
     );
     const results = await delegatorFor(agy).runMany(request("delegate_many", { prompt: "q" }), [
-      { model: "Gemini 3.8 Flash (High)", label: "flash" },
-      { model: "Gemini 3.1 Pro (High)", label: "pro" },
+      { model: "gemini-3.8-flash-high", label: "flash" },
+      { model: "gemini-3.1-pro-high", label: "pro" },
     ]);
     expect(results.find((r) => r.label === "flash")?.delegation?.output).toBe("fine");
     expect(results.find((r) => r.label === "pro")?.error).toMatch(/boom/);

@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { Config } from "../src/config.js";
+import { InvalidRequestError } from "../src/failure.js";
 import {
   turnMessage,
   WarmSessions,
@@ -177,7 +178,7 @@ describe("WarmSessions", () => {
     const s = fakeSession();
     const warm = new WarmSessions(cfg, fullCaps, { spawnSession: s.spawnSession });
     const first = warm.turn("conv-1", "/repo", "one", TURN);
-    await expect(warm.turn("conv-1", "/repo", "two", TURN)).rejects.toThrow(WarmUnavailable);
+    await expect(warm.turn("conv-1", "/repo", "two", TURN)).rejects.toThrow(InvalidRequestError);
     s.answer("done");
     await first;
     warm.shutdown();

@@ -30,7 +30,8 @@ git diff --cached          # anything the implementer staged; plain `git diff` i
 
 Open untracked files (`??`) directly - no diff shows their contents. If the dispatch was read-only,
 the bridge has already compared the tree for you: a `READ-ONLY VIOLATION` line in the response header
-means the run wrote despite being asked not to, and the tree is where you find out what it did.
+means the tree changed during the run. Inspect those changes; another concurrent writer may also
+have contributed. Inspect relevant ignored files directly because normal Git status omits them.
 
 ## Re-run the gates yourself
 
@@ -77,9 +78,9 @@ If the `guard-skills` package is installed, run the relevant guard on the diff f
 
 ## Get an adversarial second opinion
 
-`adversarial_review` routes the diff to a different model family (Gemini Pro) that hunts for edge
-cases, security issues and unstated assumptions. It is cheap and it is not the same model that wrote
-the code:
+`adversarial_review` asks another model for edge cases, security issues, and unstated assumptions.
+Inspect its configured route in `agy_status`; select a different listed family when independence
+from the implementer matters. Confirm the task fits the remaining quota or budget:
 
 ```bash
 git diff > /tmp/review.diff
@@ -125,16 +126,17 @@ mcp__claude-agy-mcp__follow_up(
 )
 ```
 
-`follow_up` resumes the same agy conversation, so the original brief and everything agy learned are
-already on its side - a short delta is enough, and you resend nothing. Keep the `session_id` from the
-dispatch for exactly this. It reuses a resident agy process and skips the cold start, unless the call
-pins `model` or `effort`.
+`follow_up` requests the same agy conversation. Check the returned session and any
+`SESSION NOT RESUMED` warning before relying on its history. Keep the reported `session_id` and send
+only a delta when continuity is confirmed. A resident process can be reused only when its model,
+roots, permission settings, and sandbox requirements remain compatible with the call.
 
 Pass `write: true` on the `follow_up` whenever the rework has to change files. A write follow-up
 always runs as a fresh process rather than against the resident session, because a resident session
 is started in plan mode and cannot honour it.
 
-On the CLI fallback the equivalent is `relay.mjs --resume-last`.
+On the CLI fallback prefer `relay.mjs --conversation <reported-id>` so continuation can be checked.
+`--resume-last` leaves the target ID unknown and its `resumed` result unverified.
 
 Then review again - rework gets the same gate-rerun, test check, diff-read, and sweep as the original,
 no shortcuts.

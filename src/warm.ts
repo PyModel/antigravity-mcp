@@ -4,8 +4,19 @@ import { StringDecoder } from "node:string_decoder";
 import type { Capabilities } from "./capabilities.js";
 import type { Confinement } from "./confine.js";
 import type { Config } from "./config.js";
-import { commandFor, MAX_STDOUT_CHARS } from "./runner.js";
-import { parseStreamEvents, type AgyEnvelope, type AgyUsage } from "./envelope.js";
+import { clipPartialOutput, commandFor, permissionArgs, type RunMode } from "./runner.js";
+import {
+  AgyFailure,
+  InvalidRequestError,
+  MAX_RAW_OUTPUT_BYTES,
+  OutputLimitError,
+} from "./failure.js";
+import {
+  parseStreamEvents,
+  type AgyEnvelope,
+  type AgyUsage,
+  type DeniedAction,
+} from "./envelope.js";
 
 /**
  * A resident agy process that answers one turn per NDJSON line on its stdin.
@@ -26,6 +37,8 @@ export interface SessionProcess {
   /** Fires once the process is gone and its stdout is fully delivered. */
   onExit(cb: () => void): void;
   kill(signal: NodeJS.Signals): void;
+  /** Actual process/pipe termination, when supplied by the native adapter. */
+  wait?(): Promise<void>;
 }
 
 export interface SessionSpawnOptions {
@@ -46,6 +59,30 @@ const spawnSessionProcess: SpawnSession = (file, args, opts) => {
     ...(opts.env ? { env: { ...process.env, ...opts.env } } : {}),
   });
   const decoder = new StringDecoder("utf8");
+  const done = new Promise<void>((resolve) => {
+    let fallback: NodeJS.Timeout | undefined;
+    child.once("exit", () => {
+      // A helper can outlive the resident and hold its pipes open. Keep group
+      // teardown separate from merely noticing the leader's exit.
+      if (child.pid !== undefined) {
+        try {
+          process.kill(-child.pid, "SIGKILL");
+        } catch {
+          /* group already gone */
+        }
+      }
+      fallback = setTimeout(resolve, 2000);
+      fallback.unref();
+    });
+    child.once("close", () => {
+      if (fallback) clearTimeout(fallback);
+      resolve();
+    });
+    child.once("error", () => {
+      if (fallback) clearTimeout(fallback);
+      resolve();
+    });
+  });
   // A dead resident process is an expected condition, not a crash. Without a
   // listener, EPIPE on this stream is an unhandled 'error' event and Node exits
   // the whole bridge; the write path below reports it as a normal turn failure
@@ -74,9 +111,9 @@ const spawnSessionProcess: SpawnSession = (file, args, opts) => {
     onExit: (cb) => {
       // "close", not "exit": the result line can still be in the pipe when the
       // process has already exited, and it must reach onData before this fires.
-      child.on("close", cb);
-      child.on("error", cb);
+      void done.then(cb);
     },
+    wait: () => done,
     kill: (signal) => {
       if (child.pid === undefined) return;
       try {
@@ -91,13 +128,6 @@ const spawnSessionProcess: SpawnSession = (file, args, opts) => {
     },
   };
 };
-
-/**
- * One turn's stream-JSON line cannot legitimately exceed what a cold run would
- * accept as its whole output; a smaller cap here failed large answers warm that
- * succeed cold.
- */
-const MAX_SESSION_BUFFER = MAX_STDOUT_CHARS;
 
 /** The driver could not answer this turn; the caller should run cold instead. */
 /** Order and spelling of the roots do not change what a sandbox confines. */
@@ -122,9 +152,10 @@ export class WarmUnavailable extends Error {
  * a turn agy may already have processed runs it twice, which for a write follow-up
  * means applying an edit twice. An ambiguous outcome has to be reported, not retried.
  */
-export class WarmTurnUncertain extends Error {
+export class WarmTurnUncertain extends AgyFailure {
   constructor(reason: string) {
     super(
+      "agy_error",
       `The resident agy session was dropped (${reason}) after the turn had already been sent, ` +
         `so it may or may not have run. Not retrying automatically: inspect the working tree and ` +
         `the conversation before re-sending.`,
@@ -134,7 +165,14 @@ export class WarmTurnUncertain extends Error {
 }
 
 export class WarmTimeout extends Error {
-  constructor(readonly text: string) {
+  readonly finishedReason = "print_timeout";
+  conversationId?: string;
+  numTurns?: number;
+  deniedActions?: DeniedAction[];
+  constructor(
+    readonly text: string,
+    readonly usage?: AgyUsage,
+  ) {
     super("resident agy session exceeded the turn timeout");
     this.name = "WarmTimeout";
   }
@@ -146,14 +184,19 @@ interface Session {
   cwd: string;
   /** The roots it is confined against, as one comparable string; empty when unconfined. */
   confinedTo: string;
+  policyKey: string;
   proc: SessionProcess;
   buffer: string;
+  /** Raw UTF-8 bytes received this turn, including complete events already consumed. */
+  outputBytes: number;
   alive: boolean;
+  exited: boolean;
   busy: boolean;
   lastUsed: number;
   /** agy reports usage cumulatively per conversation; this is the previous turn's total. */
   usageSoFar: AgyUsage;
   idleTimer?: NodeJS.Timeout;
+  killTimer?: NodeJS.Timeout;
   /** Set while a turn is in flight. */
   pending?: {
     /** True once the prompt reached agy's stdin, so a replay would be a second run. */
@@ -187,6 +230,10 @@ export interface TurnOptions {
   onProgress?: (text: string) => void;
   /** Roots the resident process must be denied writes beneath, fixed for its whole life. */
   confineTo?: string[];
+  dirs?: string[];
+  sandbox?: boolean;
+  slashCommands?: boolean;
+  mode?: RunMode;
 }
 
 function usageDelta(now: AgyUsage, before: AgyUsage): AgyUsage {
@@ -204,6 +251,8 @@ export class WarmSessions {
   private readonly sessions = new Map<string, Session>();
   /** Outstanding SIGKILL escalations, cleared on shutdown so nothing is left armed. */
   private readonly pendingKills = new Set<ReturnType<typeof setTimeout>>();
+  /** A dropped session is still owned until it has been killed/reaped. */
+  private readonly terminating = new Set<Session>();
   private readonly killGraceMs = 2_000;
 
   constructor(
@@ -220,6 +269,45 @@ export class WarmSessions {
 
   stats(): WarmStats {
     return { resident: this.sessions.size, keys: [...this.sessions.keys()] };
+  }
+
+  /** Stop stale residents before another process resumes the same conversation. */
+  async invalidate(conversationId: string): Promise<void> {
+    if (this.sessions.get(conversationId)?.busy)
+      throw new InvalidRequestError(
+        "The resident session is already running a turn. Wait for it to finish before continuing.",
+      );
+    const all = new Set([
+      ...[...this.sessions.values()].filter((s) => s.key === conversationId),
+      ...[...this.terminating].filter((s) => s.key === conversationId),
+    ]);
+    for (const s of all) this.drop(s, "cold continuation", true);
+    for (const s of all) {
+      if (!s.proc.wait) continue; // synchronous fake adapter
+      let timer: NodeJS.Timeout | undefined;
+      try {
+        await Promise.race([
+          s.proc.wait(),
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(
+              () => reject(new WarmTurnUncertain("previous resident did not exit")),
+              this.killGraceMs + 1000,
+            );
+          }),
+        ]);
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+    }
+  }
+
+  private policyKey(opts: TurnOptions): string {
+    return JSON.stringify({
+      dirs: [...new Set((opts.dirs ?? []).map((d) => resolvePath(d)))].sort(),
+      sandbox: opts.sandbox ?? this.cfg.sandbox,
+      slashCommands: opts.slashCommands === true,
+      mode: opts.mode ?? "plan",
+    });
   }
 
   /**
@@ -241,6 +329,10 @@ export class WarmSessions {
     if (opts.signal?.aborted) throw new Error("agy run cancelled by client.");
 
     const existing = this.sessions.get(conversationId);
+    if (existing?.busy)
+      throw new InvalidRequestError(
+        "The resident session is already running a turn. Wait for it to finish before continuing.",
+      );
     // SEC-M6. A resident process keeps the cwd and --add-dir it was started with.
     // Reusing it for a turn whose cwd is different runs that turn somewhere the
     // caller did not ask for and did not have containment-checked for this call.
@@ -249,31 +341,44 @@ export class WarmSessions {
     // sends this turn cold, which leaves the resident's history behind, so an
     // idle resident is dropped rather than reused by a later turn.
     const confinedTo = confinementKey(opts.confineTo);
+    const policyKey = this.policyKey(opts);
     const mismatch = !existing
       ? undefined
       : resolvePath(existing.cwd) !== resolvePath(cwd)
         ? "resident session belongs to a different working directory"
         : existing.confinedTo !== confinedTo
           ? "resident session was started with different write confinement"
-          : undefined;
+          : existing.policyKey !== policyKey
+            ? "resident session was started with different execution options"
+            : undefined;
     if (existing && mismatch) {
       if (!existing.busy) this.drop(existing, mismatch);
       throw new WarmUnavailable(mismatch);
     }
-    const session = existing ?? this.start(conversationId, cwd, opts.confineTo);
+    const session = existing ?? this.start(conversationId, cwd, opts);
     if (!session.alive) {
       this.drop(session, "process is gone");
       throw new WarmUnavailable("resident agy session had exited");
     }
-    if (session.busy) throw new WarmUnavailable("session is already running a turn");
-
     session.busy = true;
+    session.outputBytes = Buffer.byteLength(session.buffer);
     session.lastUsed = this.now();
     this.arm(session);
 
     let deadline: NodeJS.Timeout | undefined;
     const onAbort = () => {
-      session.pending?.reject(new Error("agy run cancelled by client."));
+      session.pending?.reject(
+        session.pending.sent
+          ? Object.assign(new AgyFailure("agy_error", "agy run cancelled by client."), {
+              usageKnown: false,
+              conversationId: session.key,
+              finishedReason: "interrupted",
+              ...(session.pending.text
+                ? { partialOutput: clipPartialOutput(session.pending.text, this.cfg.redact) }
+                : {}),
+            })
+          : new Error("agy run cancelled by client."),
+      );
       this.drop(session, "cancelled");
     };
     try {
@@ -285,7 +390,11 @@ export class WarmSessions {
           ...(opts.onProgress ? { onProgress: opts.onProgress } : {}),
         };
         deadline = setTimeout(() => {
-          reject(new WarmTimeout(session.pending?.text ?? ""));
+          reject(
+            Object.assign(new WarmTimeout(session.pending?.text ?? ""), {
+              conversationId: session.key,
+            }),
+          );
           this.drop(session, "turn timed out");
         }, opts.timeoutMs);
         deadline.unref?.();
@@ -315,7 +424,7 @@ export class WarmSessions {
     return this.deps.now?.() ?? Date.now();
   }
 
-  private start(conversationId: string, cwd: string, confineTo?: string[]): Session {
+  private start(conversationId: string, cwd: string, opts: TurnOptions): Session {
     if (!this.evictIfFull()) {
       throw new WarmUnavailable(`all ${this.cfg.warmMax} resident sessions are busy`);
     }
@@ -329,17 +438,23 @@ export class WarmSessions {
       "--add-dir",
       cwd,
     ];
-    if (this.cfg.skipPermissions && this.caps.has("--dangerously-skip-permissions")) {
-      args.push("--dangerously-skip-permissions");
-    }
-    if (this.cfg.sandbox && this.caps.has("--sandbox")) args.push("--sandbox");
-    if (this.caps.has("--disable-slash-commands")) args.push("--disable-slash-commands");
-    if (this.caps.has("--mode")) args.push("--mode", "plan");
+    for (const dir of opts.dirs ?? []) if (dir !== cwd) args.push("--add-dir", dir);
+    args.push(
+      ...permissionArgs(
+        {
+          mode: opts.mode ?? "plan",
+          sandbox: opts.sandbox,
+          slashCommands: opts.slashCommands,
+        },
+        this.cfg,
+        this.caps,
+      ),
+    );
 
     const spawnFn = this.deps.spawnSession ?? spawnSessionProcess;
     let proc: SessionProcess;
     try {
-      const command = commandFor(confineTo, this.cfg.agyPath, args, this.deps.confinement);
+      const command = commandFor(opts.confineTo, this.cfg.agyPath, args, this.deps.confinement);
       proc = spawnFn(command.file, command.args, {
         cwd,
         ...(this.deps.env ? { env: this.deps.env } : {}),
@@ -351,10 +466,13 @@ export class WarmSessions {
     const session: Session = {
       key: conversationId,
       cwd,
-      confinedTo: confinementKey(confineTo),
+      confinedTo: confinementKey(opts.confineTo),
+      policyKey: this.policyKey(opts),
       proc,
       buffer: "",
+      outputBytes: 0,
       alive: true,
+      exited: false,
       busy: false,
       lastUsed: this.now(),
       usageSoFar: {
@@ -368,10 +486,17 @@ export class WarmSessions {
     session.proc.onData((chunk) => this.consume(session, chunk));
     session.proc.onExit(() => {
       session.alive = false;
+      session.exited = true;
+      if (session.killTimer) {
+        clearTimeout(session.killTimer);
+        this.pendingKills.delete(session.killTimer);
+        delete session.killTimer;
+      }
+      this.terminating.delete(session);
       // Sent means agy may have run it: that is uncertain, never "run it cold".
       session.pending?.reject(
         session.pending.sent
-          ? new WarmTurnUncertain("process exited mid-turn")
+          ? this.uncertain(session, "process exited mid-turn")
           : new WarmUnavailable("resident agy session exited mid-turn"),
       );
       this.forget(session);
@@ -382,14 +507,25 @@ export class WarmSessions {
   }
 
   private consume(session: Session, chunk: string): void {
-    session.buffer += chunk;
-    // Bounded: agy emits newline-delimited JSON, so a buffer that grows past this
-    // without yielding an event is malformed output, not a big answer. Left
-    // unbounded it was a slow memory leak for the life of the resident session.
-    if (session.buffer.length > MAX_SESSION_BUFFER) {
-      this.drop(session, "resident session produced unparseable output");
+    if (!session.alive) return;
+    const bytes = Buffer.byteLength(chunk);
+    // Count complete events too: clearing the NDJSON carry never bounds the
+    // accumulated text of a long stream with otherwise well-formed lines.
+    if (bytes > MAX_RAW_OUTPUT_BYTES - session.outputBytes) {
+      session.pending?.reject(
+        Object.assign(new OutputLimitError("resident stdout", MAX_RAW_OUTPUT_BYTES), {
+          conversationId: session.key,
+          ...(session.pending.text
+            ? { partialOutput: clipPartialOutput(session.pending.text, this.cfg.redact) }
+            : {}),
+        }),
+      );
+      session.buffer = "";
+      this.drop(session, "raw output limit exceeded", true);
       return;
     }
+    session.outputBytes += bytes;
+    session.buffer += chunk;
     const { events, rest } = parseStreamEvents(session.buffer);
     session.buffer = rest;
     for (const ev of events) {
@@ -435,15 +571,33 @@ export class WarmSessions {
     if (this.sessions.get(session.key) === session) this.sessions.delete(session.key);
   }
 
+  private uncertain(session: Session, why: string): WarmTurnUncertain {
+    return Object.assign(new WarmTurnUncertain(why), {
+      usageKnown: false,
+      conversationId: session.key,
+      finishedReason: "interrupted",
+      ...(session.pending?.text
+        ? { partialOutput: clipPartialOutput(session.pending.text, this.cfg.redact) }
+        : {}),
+    });
+  }
+
   private drop(session: Session, why: string, hard = false): void {
     if (session.idleTimer) clearTimeout(session.idleTimer);
+    if (session.killTimer) {
+      clearTimeout(session.killTimer);
+      this.pendingKills.delete(session.killTimer);
+      delete session.killTimer;
+    }
     session.alive = false;
     this.forget(session);
+    if (!session.exited) this.terminating.add(session);
     session.pending?.reject(
       session.pending.sent
-        ? new WarmTurnUncertain(why)
+        ? this.uncertain(session, why)
         : new WarmUnavailable(`resident session dropped: ${why}`),
     );
+    if (session.exited) return;
     const signal = (sig: NodeJS.Signals) => {
       try {
         session.proc.kill(sig);
@@ -458,22 +612,27 @@ export class WarmSessions {
       // leaving it behind forever: kill it outright rather than politely.
       signal("SIGTERM");
       signal("SIGKILL");
+      if (!session.proc.wait) this.terminating.delete(session);
       return;
     }
     signal("SIGTERM");
     // Escalate like the cold path does, for a drop while the bridge keeps running.
     const escalate = setTimeout(() => {
       this.pendingKills.delete(escalate);
-      signal("SIGKILL");
+      delete session.killTimer;
+      if (!session.exited) signal("SIGKILL");
+      if (!session.proc.wait) this.terminating.delete(session);
     }, this.killGraceMs);
     escalate.unref?.();
+    session.killTimer = escalate;
     this.pendingKills.add(escalate);
   }
 
   /** Stops every resident session. Safe to call more than once. */
   shutdown(): void {
+    const owned = new Set([...this.sessions.values(), ...this.terminating]);
     for (const t of this.pendingKills) clearTimeout(t);
     this.pendingKills.clear();
-    for (const s of [...this.sessions.values()]) this.drop(s, "shutdown", true);
+    for (const s of owned) this.drop(s, "shutdown", true);
   }
 }

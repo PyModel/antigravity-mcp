@@ -1,12 +1,10 @@
-import type { AgyUsage } from "./envelope.js";
+import type { AgyUsage, DeniedAction } from "./envelope.js";
+import type { AgyErrorDetails } from "./failure.js";
 
 /**
- * Quota detection and cooldown tracking for agy model failover.
- *
- * agy never surfaces RESOURCE_EXHAUSTED to stdout/stderr in print mode — it
- * silently retries until --print-timeout, then exits 0 with empty output.
- * The only reliable signal is the 429 line in its log file, which includes
- * the exact reset time ("Resets in 96h53m25s").
+ * Terminal quota detection and cooldown tracking for later requests.
+ * Current CLIs surface structured failures; older versions also need the log
+ * signal. An intermediate 429 does not terminate the CLI's native retry loop.
  */
 
 export const DEFAULT_COOLDOWN_SEC = 15 * 60;
@@ -21,14 +19,12 @@ export const MIN_COOLDOWN_SEC = 60;
  * The one place a 429 is recognised.
  *
  * It is deliberately broader than the exact string agy 1.2.x emits
- * ("RESOURCE_EXHAUSTED (code 429)"). The log poller is the *only* way this
- * bridge learns about quota exhaustion, so a wording change upstream must not
+ * ("RESOURCE_EXHAUSTED (code 429)"). A wording change upstream must not
  * silently switch cooldowns off. `failure.ts` classifies stderr with this same
  * pattern rather than a second, differently-worded copy of it.
  *
- * Broad, but never a bare number: a matched line kills a healthy run and cools
- * the model machine-wide, and "read 429 bytes" or "handler.go:429" in a chatty
- * log did exactly that. A 429 counts only with a status word beside it.
+ * Broad, but never a bare number: "read 429 bytes" or "handler.go:429" is not
+ * exhaustion. A 429 counts only with a status word beside it.
  */
 export const QUOTA_RE =
   /RESOURCE_EXHAUSTED|ResourceExhausted|\b(?:code|status|HTTP)[\s:=]*429\b|\b429 Too Many Requests\b|quota (?:exceeded|reached|exhausted)/im;
@@ -49,12 +45,12 @@ export interface QuotaInfo {
 export function parseResetDuration(text: string): number | undefined {
   const m = /^(?:(\d+)d)?(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/.exec(text.trim());
   if (!m || !m.slice(1).some(Boolean)) return undefined;
-  return (
+  const seconds =
     Number(m[1] ?? 0) * 86_400 +
     Number(m[2] ?? 0) * 3600 +
     Number(m[3] ?? 0) * 60 +
-    Number(m[4] ?? 0)
-  );
+    Number(m[4] ?? 0);
+  return Number.isFinite(seconds) ? seconds : undefined;
 }
 
 export function formatDuration(totalSeconds: number): string {
@@ -81,6 +77,14 @@ export class QuotaError extends Error {
   readonly resetText?: string;
   /** Tokens the exhausted run still spent, when agy reported them. */
   usage?: AgyUsage;
+  usageKnown?: boolean;
+  details?: AgyErrorDetails;
+  partialOutput?: string;
+  conversationId?: string;
+  finishedReason?: string;
+  numTurns?: number;
+  deniedActions?: DeniedAction[];
+  structuredOutput?: unknown;
 
   constructor(
     readonly model: string | undefined,
@@ -131,7 +135,8 @@ export class CooldownRegistry {
   set(model: string, resetSeconds: number | undefined): void {
     const entries = this.live();
     const t = this.now();
-    entries[model] = t + Math.max(resetSeconds ?? DEFAULT_COOLDOWN_SEC, MIN_COOLDOWN_SEC) * 1000;
+    const duration = Number.isFinite(resetSeconds) ? resetSeconds! : DEFAULT_COOLDOWN_SEC;
+    entries[model] = Math.max(entries[model] ?? 0, t + Math.max(duration, MIN_COOLDOWN_SEC) * 1000);
     this.store.save(entries, t);
   }
 

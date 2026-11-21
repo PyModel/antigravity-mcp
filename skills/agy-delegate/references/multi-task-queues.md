@@ -38,8 +38,9 @@ a constraint that emerged in task 2 must be restated in task 5's brief or it wil
 exception is a `follow_up` on the same `session_id`, which keeps that run's context - but that is a
 rework of one task, not the next task in the queue.
 
-Check `agy_status` before a long queue. It shows quota cooldowns and tokens spent, which is how you
-find out a chain is about to fail over before the queue is halfway through.
+Check `agy_status` before a long queue. It shows recorded quota cooldowns and reported usage.
+Known cooldowns may affect model selection for the next independent request; a failed turn is not
+automatically replayed, and missing usage is not evidence that the turn was free.
 
 ## Keep a progress file
 

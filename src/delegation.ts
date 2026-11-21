@@ -5,8 +5,14 @@ import { assertWithinRoots, redact, redactDeep } from "./egress.js";
 import { rootInsideState } from "./confine.js";
 import { combineSnapshots, snapshotTree, treeChanged, type TreeSnapshot } from "./worktree.js";
 import { EMPTY_USAGE, type AgyUsage, type DeniedAction } from "./envelope.js";
-import { AgyFailure } from "./failure.js";
-import { resolveEntry, type Effort, type ModelInfo, type ModelRegistry } from "./models.js";
+import { AgyFailure, classifyRun, InvalidRequestError } from "./failure.js";
+import {
+  isEffort,
+  resolveEntry,
+  type Effort,
+  type ModelInfo,
+  type ModelRegistry,
+} from "./models.js";
 import {
   MemoryPreferenceStore,
   type ModelPreference,
@@ -21,15 +27,9 @@ import {
   type RunProgress,
   truncate,
 } from "./runner.js";
-import { modeFor, type ToolDef } from "./tools.js";
+import { modeFor, TOOLS, type ToolDef } from "./tools.js";
 import { UsageLedger } from "./usage.js";
-import {
-  WarmSessions,
-  WarmTimeout,
-  WarmTurnUncertain,
-  WarmUnavailable,
-  type WarmDeps,
-} from "./warm.js";
+import { WarmSessions, WarmTimeout, WarmUnavailable, type WarmDeps } from "./warm.js";
 
 export interface DelegationRequest {
   tool: ToolDef;
@@ -41,7 +41,9 @@ export interface DelegationRequest {
   conversationId?: string;
   /** Caller-pinned model; skips the tool's chain. */
   model?: string;
-  effort?: "low" | "medium" | "high";
+  effort?: Effort;
+  /** Internal provenance: automatic council members do not bypass cooldowns. */
+  modelOrigin?: "explicit" | "automatic";
   /** JSON Schema string; fills `structuredOutput`. */
   jsonSchema?: string;
   slashCommands?: boolean;
@@ -63,9 +65,11 @@ export interface Delegation {
   note?: string;
   sessionId?: string;
   timedOut: boolean;
+  finishedReason?: string;
   /** Tool actions agy was refused. Non-empty means the answer may be incomplete. */
   deniedActions: DeniedAction[];
   usage: AgyUsage;
+  usageKnown?: boolean;
   structuredOutput?: unknown;
   numTurns: number;
   /** Original length when the output was cut. */
@@ -149,9 +153,6 @@ interface Route {
   note?: string;
 }
 
-/** Checks, after a failure, whether running the same call again is safe. */
-type MayRepeat = () => Promise<boolean>;
-
 /**
  * A failed run was not retried or failed over, because it may already have
  * taken effect. Re-running a write that half-happened applies it twice.
@@ -159,9 +160,11 @@ type MayRepeat = () => Promise<boolean>;
 export class NotRepeatedError extends Error {
   constructor(cause: Error, what: "retried" | "failed over to the next model") {
     super(
-      `${cause.message}\n\nNot ${what}: the working tree changed while this run was live, or ` +
-        `could not be fingerprinted for a run allowed to write, so it may already have taken ` +
-        `effect and repeating it could apply that effect twice. Inspect the tree, then call again.`,
+      `${cause.message}\n\nNot ${what}: the request was sent to agy and its outcome may include ` +
+        `file changes or external effects. An unchanged or unreadable working tree cannot ` +
+        `prove that nothing happened. Inspect the working tree and conversation before ` +
+        `deliberately dispatching another turn.`,
+      { cause },
     );
     this.name = "NotRepeatedError";
   }
@@ -296,12 +299,39 @@ export class Delegator {
   async defaultChoice(): Promise<ModelPreference | null> {
     if (!this.cfg.defaultModel) return null;
     const available = await this.models.available();
-    const name = available ? resolveEntry(this.cfg.defaultModel, available) : undefined;
-    if (!name) return null;
-    const tier = available?.find((m) => m.name === name)?.effort;
-    const effort =
-      tier === "low" || tier === "medium" || tier === "high" ? tier : this.cfg.defaultEffort;
-    return { model: name, ...(effort ? { effort } : {}), setAt: "" };
+    if (!available) return null;
+    const id = resolveEntry(this.cfg.defaultModel, available);
+    if (!id) {
+      throw new InvalidRequestError(
+        `AGY_DEFAULT_MODEL "${this.cfg.defaultModel}" is not offered by this installation. ` +
+          `Run agy models and choose an available default or call set_model with a listed ID.`,
+      );
+    }
+    const pick = await this.selection(this.cfg.defaultModel, this.cfg.defaultEffort, available);
+    const tier = available.find((m) => m.id === pick.model)?.effort;
+    return { model: pick.model!, ...(isEffort(tier) ? { effort: tier } : {}), setAt: "" };
+  }
+
+  /** Resolve a fixed variant or an intentional family/effort selection exactly once. */
+  private async selection(
+    entry: string,
+    effort: Effort | undefined,
+    available: ModelInfo[],
+  ): Promise<Candidate> {
+    const id = resolveEntry(entry, available);
+    if (!id) {
+      throw new InvalidRequestError(
+        `Model "${entry}" is not available. Run agy models and select a listed model ID.`,
+      );
+    }
+    const fixed = available.find((m) => m.id === entry || m.name === entry);
+    if (fixed && effort && fixed.effort !== effort) {
+      throw new InvalidRequestError(
+        `Model "${entry}" fixes the ${fixed.effort ?? "untiered"} variant; effort "${effort}" ` +
+          `conflicts with that selection. Select the desired listed ID or use a family selector.`,
+      );
+    }
+    return (await this.models.forEffort(id, effort)) ?? { model: id };
   }
 
   /**
@@ -318,32 +348,35 @@ export class Delegator {
     // A choice that cannot be checked is not saved. Stored unverified, a
     // misspelt name was later dropped from every chain without a word, while
     // the status tool kept reporting it as the model in charge.
-    if (!(await this.models.available())) {
+    const available = await this.models.available();
+    if (!available) {
       throw new Error(
         "set_model could not verify the model: `agy models` failed, so nothing was saved. " +
           "Check that agy is installed and signed in, then call set_model again.",
       );
     }
-    if (!model) {
+    if (!model && !effort) {
       const fallback = await this.defaultChoice();
       if (!fallback) {
         throw new Error(
           "set_model needs a `model`: the default could not be resolved against agy's model list.",
         );
       }
-      model = fallback.model;
-      effort ??= fallback.effort;
+      const pref = { ...fallback, setAt: new Date().toISOString() };
+      this.prefs.save(pref);
+      return pref;
     }
-    const { models, note } = await this.models.resolveChain({ explicit: model, chain: [] });
-    const resolved = models[0] ?? model;
-    const pick = (await this.models.forEffort(resolved, effort)) ?? { model: resolved };
+    model ??= this.cfg.defaultModel;
+    if (!model)
+      throw new InvalidRequestError("set_model requires a listed model or configured default.");
+    const pick = await this.selection(model, effort, available);
+    const tier = available.find((m) => m.id === pick.model)?.effort;
     const pref: ModelPreference = {
-      model: pick.model,
-      ...(effort ? { effort } : {}),
+      model: pick.model!,
+      ...(isEffort(tier) ? { effort: tier } : {}),
       setAt: new Date().toISOString(),
     };
     this.prefs.save(pref);
-    if (note) console.error(`claude-agy-mcp: set_model: ${note}`);
     return pref;
   }
 
@@ -436,9 +469,8 @@ export class Delegator {
     // taken inside the admission gate, so this filesystem work is bounded by
     // AGY_MAX_CONCURRENCY like everything else and cannot stampede a big tree.
     //
-    // Every root agy is given is fingerprinted, not only `cwd`: a write into a
-    // `dirs` entry is just as much a write. The same fingerprint decides whether
-    // a failed run may be repeated, so it is taken for write runs too.
+    // Every root a read-only run receives is fingerprinted, not only `cwd`.
+    // Fingerprints report local changes; they never authorize replay.
     const plan = modeFor(req.tool, req.write) === "plan";
     const readOnly = this.readOnlyFor(req);
     if (readOnly && !readOnly.enforced && this.cfg.readOnlyEnforcement === "require") {
@@ -459,17 +491,10 @@ export class Delegator {
         // pass the pre-flight check while spend was still zero and overshoot was
         // bounded by leg count rather than by the limit.
         this.ledger.assertWithinBudget();
-        const before = await fingerprint();
-        // A repeat is safe only when the tree provably did not move. Unknown is
-        // accepted for a plan run, whose contract is read-only; a run that may
-        // write gets no benefit of the doubt.
-        const mayRepeat: MayRepeat = async () => {
-          const changed = treeChanged(before, await fingerprint());
-          return changed === false || (changed === undefined && plan);
-        };
+        const before = plan ? await fingerprint() : { method: "none" as const };
         let result: Delegation;
         try {
-          result = await this.attemptWithSkewRetry(req, prompt, route, mayRepeat);
+          result = await this.attemptWithInventoryRefresh(req, prompt, route);
         } catch (err) {
           // A plan run that wrote and then failed still wrote; the failure must
           // not swallow the evidence.
@@ -494,22 +519,63 @@ export class Delegator {
    * `model`, else the user's `set_model` choice, else the chain's head.
    * Re-tiering the fallbacks as well would turn "Flash (Medium)" back into the
    * "Flash (High)" that just hit its quota, so they keep the tier their name
-   * carries, and only an untiered fallback takes the configured default effort.
+   * carries. No effort is invented for an untiered fallback.
    */
   private async routeFor(req: DelegationRequest, pref: ModelPreference | null): Promise<Route> {
     // Continuing a conversation reuses the model it was started with, unless the
     // caller pinned one — agy honours a model switch on a resumed conversation,
     // which is how a cheap session gets a second opinion without re-sending it.
-    if (req.conversationId && !req.model) return { candidates: [{}] };
+    if (req.conversationId && !req.model) {
+      if (req.effort) {
+        throw new InvalidRequestError(
+          "An effort-only follow_up cannot be verified because this bridge does not know the " +
+            "conversation's current model. Include its listed model ID (or a family selector) " +
+            "with the effort, or omit effort to preserve the conversation's choice.",
+        );
+      }
+      return { candidates: [{}] };
+    }
 
+    const available = await this.models.available();
+    if (req.model) {
+      // A call-local model selection never inherits the saved model's effort.
+      if (available)
+        return { candidates: [await this.selection(req.model, req.effort, available)] };
+      if (!/^[a-z0-9][a-z0-9._-]*$/.test(req.model)) {
+        throw new InvalidRequestError(
+          "Model discovery is unavailable, so a bridge selector or display label cannot be " +
+            "converted to a CLI ID. Check agy models or provide an exact CLI model ID; nothing was dispatched.",
+        );
+      }
+      const resolution = await this.models.resolveChain({ explicit: req.model, chain: [] });
+      const pick = await this.models.forEffort(resolution.models[0], req.effort);
+      return { candidates: [pick ?? { model: resolution.models[0] }], note: resolution.note };
+    }
+
+    if (pref) {
+      if (!available || !resolveEntry(pref.model, available)) {
+        throw new InvalidRequestError(
+          `Saved model "${pref.model}" cannot be verified in agy models. No replacement was ` +
+            `chosen and the saved preference was kept. Run agy models, then call set_model ` +
+            `with an available model ID to recover.`,
+        );
+      }
+      const saved = available.find((m) => m.id === resolveEntry(pref.model, available));
+      if (pref.effort && saved?.effort !== pref.effort) {
+        throw new InvalidRequestError(
+          `Saved model "${pref.model}" and effort "${pref.effort}" disagree with the listing. ` +
+            `Call set_model with the exact variant you intend; the preference was kept unchanged.`,
+        );
+      }
+    }
+
+    // A last-resort default is irrelevant when the chosen tool policy resolves.
+    // Accepting that default through set_model still validates it explicitly.
     const resolution = await this.models.resolveChain({
-      explicit: req.model,
       chain: [...(pref ? [pref.model] : []), ...(req.tool.chain ?? [])],
       defaultModel: this.cfg.defaultModel,
     });
-    const available = await this.models.available();
-    const primaryEffort = req.effort ?? pref?.effort ?? this.cfg.defaultEffort;
-    const tierOf = (name: string) => available?.find((m) => m.name === name)?.effort;
+    const tierOf = (id: string) => available?.find((m) => m.id === id)?.effort;
 
     const candidates: Candidate[] = [];
     for (const [i, model] of resolution.models.entries()) {
@@ -517,16 +583,38 @@ export class Delegator {
         candidates.push({});
         continue;
       }
+      // Request effort deliberately re-tiers an automatic choice. A fixed saved
+      // choice otherwise keeps its own tier, regardless of environment defaults.
+      const primaryEffort = req.effort ?? (pref ? undefined : this.cfg.defaultEffort);
       const pick =
         i === 0
           ? await this.models.forEffort(model, primaryEffort)
           : tierOf(model)
             ? { model }
-            : await this.models.forEffort(model, this.cfg.defaultEffort);
+            : await this.models.forEffort(model, undefined);
       const candidate: Candidate = pick ?? { model };
       if (!candidates.some((c) => c.model === candidate.model)) candidates.push(candidate);
     }
     return { candidates, ...(resolution.note ? { note: resolution.note } : {}) };
+  }
+
+  /** Configured policy and effective IDs are distinct status facts. */
+  async effectiveRoutes(): Promise<{ tool: string; models: string[]; error?: string }[]> {
+    const preference = this.prefs.load();
+    const rows: { tool: string; models: string[]; error?: string }[] = [];
+    for (const tool of TOOLS) {
+      if (!tool.chain) continue;
+      try {
+        const route = await this.routeFor({ tool, args: {}, cwd: "", timeoutSec: 0 }, preference);
+        rows.push({
+          tool: tool.name,
+          models: route.candidates.map((c) => c.model ?? "agy default (unverified)"),
+        });
+      } catch (error) {
+        rows.push({ tool: tool.name, models: [], error: (error as Error).message });
+      }
+    }
+    return rows;
   }
 
   /**
@@ -573,46 +661,50 @@ export class Delegator {
   }
 
   /**
-   * Runs the route, and re-reads `agy models` once if agy rejects every name in it.
-   *
-   * An unknown model does not fail over, by design — it is a caller error, not a
-   * quota problem. But it is also exactly what an agy upgrade under a running
-   * bridge looks like, because the listing is cached for the process lifetime.
-   * Without this the server stayed bricked until it was restarted.
+   * Invalidates discovery after an invalid-model failure for the next deliberate
+   * call. Error text alone never authorizes replay of a dispatched turn.
    */
-  private async attemptWithSkewRetry(
+  private async attemptWithInventoryRefresh(
     req: DelegationRequest,
     prompt: string,
     route: Route,
-    mayRepeat: MayRepeat,
   ): Promise<Delegation> {
     try {
-      return await this.attempt(req, prompt, route, mayRepeat);
+      return await this.attempt(req, prompt, route);
     } catch (err) {
-      // agy rejects an unknown model before running anything, so this repeat
-      // needs no tree check.
-      if (!(err instanceof AgyFailure) || err.kind !== "invalid_model") throw err;
-      this.models.invalidate();
-      const fresh = await this.routeFor(req, this.prefs.load());
-      return this.attempt(req, prompt, fresh, mayRepeat);
+      const cause = err instanceof NotRepeatedError ? err.cause : err;
+      if (cause instanceof AgyFailure && cause.kind === "invalid_model") this.models.invalidate();
+      // Error text is not proof that the entire agent turn was never admitted.
+      // Refresh discovery for the next deliberate call; never resend this turn.
+      throw err;
     }
   }
 
-  private async attempt(
-    req: DelegationRequest,
-    prompt: string,
-    route: Route,
-    mayRepeat: MayRepeat,
-  ): Promise<Delegation> {
+  /** Legacy releases stored display labels; honor a uniquely mapped label too. */
+  private async coolingFor(model: string): Promise<string | undefined> {
+    const available = await this.models.available();
+    const row = available?.find((item) => item.id === model);
+    const aliases = new Set([model]);
+    if (row && available?.filter((item) => item.name === row.name).length === 1)
+      aliases.add(row.name);
+    const longest = this.cooldowns.active().find((entry) => aliases.has(entry.model));
+    return longest ? this.cooldowns.describe(longest.model) : undefined;
+  }
+
+  private async attempt(req: DelegationRequest, prompt: string, route: Route): Promise<Delegation> {
     const attempts: string[] = [];
 
     // A follow-up on a live conversation is the case a resident process is for.
     if (this.warmEligible(req)) {
       const conversationId = req.conversationId!;
       try {
+        this.ledger.assertWithinBudget();
         const confineTo = this.confineFor(req);
         const envelope = await this.warm.turn(conversationId, req.cwd, prompt, {
           timeoutMs: req.timeoutSec * 1000,
+          dirs: this.dirsFor(req),
+          slashCommands: req.slashCommands,
+          sandbox: req.sandbox,
           ...(confineTo ? { confineTo } : {}),
           ...(req.signal ? { signal: req.signal } : {}),
           ...(req.onProgress
@@ -622,16 +714,21 @@ export class Delegator {
               }
             : {}),
         });
-        if (envelope.status === "SUCCESS" && envelope.response.trim()) {
-          this.ledger.record(undefined, envelope.usage);
+        // Every observed result spent these tokens, including an error/empty
+        // answer. Recording only successes made failed warm turns invisible.
+        this.ledger.record(undefined, envelope.usage, envelope.usageKnown);
+        const classified = classifyRun({ envelope, exitCode: 0, stderr: "" });
+        if (envelope.finishedReason === "print_timeout" || !classified) {
           return this.finish({
             output: envelope.response.trim(),
             attempts,
             sessionId: envelope.conversationId ?? conversationId,
             ...continuationOf(conversationId, envelope.conversationId),
-            timedOut: false,
+            timedOut: envelope.finishedReason === "print_timeout",
+            ...(envelope.finishedReason ? { finishedReason: envelope.finishedReason } : {}),
             deniedActions: envelope.deniedActions,
             usage: envelope.usage,
+            usageKnown: envelope.usageKnown,
             ...(envelope.structuredOutput !== undefined
               ? { structuredOutput: envelope.structuredOutput }
               : {}),
@@ -639,38 +736,43 @@ export class Delegator {
             warm: true,
           });
         }
-        // The turn ran; an empty answer does not mean it did nothing.
-        if (!(await mayRepeat())) {
-          throw new NotRepeatedError(
-            new Error("The resident agy session returned no answer."),
-            "retried",
-          );
-        }
-        attempts.push("warm session returned no answer; retried with a fresh agy process");
+        const failure = new AgyFailure(
+          classified?.kind ?? "agy_error",
+          classified?.message ?? "The resident agy session did not complete.",
+        );
+        failure.usage = envelope.usage;
+        failure.usageKnown = envelope.usageKnown;
+        failure.partialOutput = envelope.response;
+        failure.conversationId = envelope.conversationId ?? conversationId;
+        failure.finishedReason = envelope.finishedReason;
+        failure.numTurns = envelope.numTurns;
+        failure.deniedActions = envelope.deniedActions;
+        failure.structuredOutput = envelope.structuredOutput;
+        await this.warm.invalidate(conversationId);
+        throw new NotRepeatedError(failure, "retried");
       } catch (err) {
         if (err instanceof WarmTimeout) {
+          this.ledger.record(undefined, err.usage ?? EMPTY_USAGE, Boolean(err.usage));
           return this.finish({
             output: err.text.trim(),
             attempts,
-            sessionId: conversationId,
+            sessionId: err.conversationId ?? conversationId,
             timedOut: true,
-            deniedActions: [],
-            usage: EMPTY_USAGE,
-            numTurns: 0,
+            finishedReason: err.finishedReason ?? "print_timeout",
+            deniedActions: err.deniedActions ?? [],
+            usage: err.usage ?? EMPTY_USAGE,
+            usageKnown: Boolean(err.usage),
+            numTurns: err.numTurns ?? 0,
             warm: true,
           });
         }
-        if (err instanceof WarmTurnUncertain) {
-          // The resident process died after agy received the turn. Warm turns
-          // are plan-mode only, so re-running cold is safe exactly when the
-          // tree shows nothing happened; otherwise the caller has to decide.
-          if (!(await mayRepeat())) throw err;
-          attempts.push(
-            "warm session died after the turn was sent and the tree is unchanged; ran a fresh agy process",
-          );
-        } else if (err instanceof WarmUnavailable) {
+        if (err instanceof WarmUnavailable) {
           attempts.push(`warm session unavailable (${err.message}); ran a fresh agy process`);
         } else {
+          // Post-send stream failures/cancellation carry unknown or observed
+          // usage. Envelopes were recorded above; their NotRepeatedError wrapper
+          // has no direct usage field, so they are not counted twice here.
+          this.recordFailedSpend(undefined, err);
           throw err;
         }
       }
@@ -679,30 +781,33 @@ export class Delegator {
     for (const [i, { model, effort }] of route.candidates.entries()) {
       // A model the caller named is tried whatever its cooldown says: the
       // cooldown may be stale or a false alarm, and the caller asked for it.
-      const pinned = i === 0 && req.model !== undefined;
-      if (model && !pinned && this.cooldowns.cooling(model)) {
-        attempts.push(`${model}: quota cooldown, ${this.cooldowns.describe(model)} left`);
+      const pinned = i === 0 && req.model !== undefined && req.modelOrigin !== "automatic";
+      const cooling = model && !pinned ? await this.coolingFor(model) : undefined;
+      if (cooling !== undefined) {
+        attempts.push(`${model}: quota cooldown, ${cooling} left`);
         continue;
       }
       try {
-        return await this.runOnce(req, prompt, model, effort, attempts, route.note, mayRepeat);
+        return await this.runOnce(req, prompt, model, effort, attempts, route.note);
       } catch (err) {
         this.recordFailedSpend(model, err);
         const quota =
           err instanceof QuotaError || (err instanceof AgyFailure && err.policy.failover);
-        if (!quota || !model) throw err;
+        if (!quota || !model) {
+          if (
+            err instanceof AgyFailure &&
+            (err.kind === "network" || err.kind === "invalid_model")
+          ) {
+            throw new NotRepeatedError(err, "retried");
+          }
+          throw err;
+        }
         // `failover` is granted to quota alone. A quota classified from stderr or
         // the envelope rather than the log is still an exhausted model: record
         // the cooldown, or every later call re-burns it before failing over.
         const reset = err instanceof QuotaError ? err.resetSeconds : undefined;
         this.cooldowns.set(model, reset);
-        if (!(await mayRepeat()))
-          throw new NotRepeatedError(err as Error, "failed over to the next model");
-        attempts.push(
-          err instanceof QuotaError
-            ? `${model}: quota exhausted${err.resetText ? ` (resets in ${err.resetText})` : ""}`
-            : `${model}: ${(err as Error).message}`,
-        );
+        throw new NotRepeatedError(err as Error, "failed over to the next model");
       }
     }
 
@@ -715,8 +820,10 @@ export class Delegator {
 
   /** A failed run still spent tokens; the budget has to see them. */
   private recordFailedSpend(model: string | undefined, err: unknown): void {
-    const usage = (err as { usage?: AgyUsage } | undefined)?.usage;
-    if (usage) this.ledger.record(model, usage);
+    const failure = err as { usage?: AgyUsage; usageKnown?: boolean } | undefined;
+    if (failure?.usage || failure?.usageKnown === false) {
+      this.ledger.record(model, failure.usage ?? EMPTY_USAGE, failure.usageKnown !== false);
+    }
   }
 
   private async runOnce(
@@ -726,54 +833,43 @@ export class Delegator {
     effort: Effort | undefined,
     attempts: string[],
     note: string | undefined,
-    mayRepeat: MayRepeat,
   ): Promise<Delegation> {
-    const call = () =>
-      runAgy(
-        {
-          prompt,
-          cwd: req.cwd,
-          ...(this.dirsFor(req).length ? { dirs: this.dirsFor(req) } : {}),
-          ...(model ? { model } : {}),
-          ...(effort ? { effort } : {}),
-          mode: modeFor(req.tool, req.write),
-          ...(req.sandbox !== undefined ? { sandbox: req.sandbox } : {}),
-          ...(req.slashCommands !== undefined ? { slashCommands: req.slashCommands } : {}),
-          ...(req.jsonSchema ? { jsonSchema: req.jsonSchema } : {}),
-          ...(req.conversationId ? { conversationId: req.conversationId } : {}),
-          timeoutSec: req.timeoutSec,
-          ...(req.signal ? { signal: req.signal } : {}),
-          env: this.childEnv(),
-          ...(req.onProgress ? { onProgress: req.onProgress } : {}),
-          ...(this.confineFor(req) ? { confineTo: this.confineFor(req) } : {}),
+    // A resident owns a presence lock and an in-memory history. Before a cold
+    // continuation, stop it and wait for termination rather than branching history.
+    if (req.conversationId) await this.warm.invalidate(req.conversationId);
+    this.ledger.assertWithinBudget();
+    const result = await runAgy(
+      {
+        prompt,
+        cwd: req.cwd,
+        ...(this.dirsFor(req).length ? { dirs: this.dirsFor(req) } : {}),
+        ...(model ? { model } : {}),
+        ...(effort ? { effort } : {}),
+        mode: modeFor(req.tool, req.write),
+        ...(req.sandbox !== undefined ? { sandbox: req.sandbox } : {}),
+        ...(req.slashCommands !== undefined ? { slashCommands: req.slashCommands } : {}),
+        ...(req.jsonSchema ? { jsonSchema: req.jsonSchema } : {}),
+        ...(req.conversationId ? { conversationId: req.conversationId } : {}),
+        timeoutSec: req.timeoutSec,
+        ...(req.signal ? { signal: req.signal } : {}),
+        env: this.childEnv(),
+        ...(req.onProgress ? { onProgress: req.onProgress } : {}),
+        ...(this.confineFor(req) ? { confineTo: this.confineFor(req) } : {}),
+      },
+      this.cfg,
+      this.caps,
+      {
+        spawn: this.deps.spawn,
+        confinement: this.deps.confinement,
+        timing: this.deps.timing,
+        track: (proc) => {
+          this.live.add(proc);
+          return () => this.live.delete(proc);
         },
-        this.cfg,
-        this.caps,
-        {
-          spawn: this.deps.spawn,
-          confinement: this.deps.confinement,
-          timing: this.deps.timing,
-          track: (proc) => {
-            this.live.add(proc);
-            return () => this.live.delete(proc);
-          },
-        },
-      );
+      },
+    );
 
-    let result;
-    try {
-      result = await call();
-    } catch (err) {
-      // A network blip is the one failure worth repeating verbatim, and only
-      // when the first run provably left the tree as it found it.
-      if (!(err instanceof AgyFailure) || !err.policy.retryOnce) throw err;
-      this.recordFailedSpend(model, err);
-      if (!(await mayRepeat())) throw new NotRepeatedError(err, "retried");
-      attempts.push(`${model ?? "agy default"}: ${err.kind}, retrying once`);
-      result = await call();
-    }
-
-    this.ledger.record(model, result.usage);
+    this.ledger.record(model, result.usage, result.usageKnown);
     return this.finish({
       output: result.output,
       ...(model ? { model } : {}),
@@ -786,8 +882,10 @@ export class Delegator {
       ...(result.conversationId ? { sessionId: result.conversationId } : {}),
       ...continuationOf(req.conversationId, result.conversationId),
       timedOut: result.timedOut,
+      ...(result.finishedReason ? { finishedReason: result.finishedReason } : {}),
       deniedActions: result.deniedActions,
       usage: result.usage,
+      usageKnown: result.usageKnown,
       ...(result.structuredOutput !== undefined
         ? { structuredOutput: result.structuredOutput }
         : {}),
@@ -803,7 +901,7 @@ export class Delegator {
    */
   async runMany(
     req: DelegationRequest,
-    legs: { model?: string; prompt?: string; label: string }[],
+    legs: { model?: string; prompt?: string; label: string; automatic?: boolean }[],
     /** The caller listed the models itself, rather than taking the default council. */
     opts: { modelsChosen?: boolean } = {},
   ): Promise<{ label: string; delegation?: Delegation; error?: string }[]> {
@@ -814,17 +912,78 @@ export class Delegator {
     if (this.cfg.askModel && !this.prefs.load() && !chosen && !req.conversationId) {
       throw new ModelNotChosenError(await this.defaultChoice(), await this.models.available());
     }
+
+    // Resolve only the selected fan-out mode. A tasks-only call must not depend
+    // on council availability, and no explicit council may partially dispatch
+    // before a later invalid member/alias is discovered.
+    let prepared = legs;
+    if (legs.some((leg) => leg.model !== undefined)) {
+      const available = await this.models.available();
+      if (!available) {
+        throw new InvalidRequestError(
+          "Cannot verify council membership because agy models could not be read. " +
+            "Nothing was dispatched. Check the CLI and authentication, then try again.",
+        );
+      }
+      prepared = [];
+      const effective = new Set<string>();
+      const unavailable: string[] = [];
+      for (const leg of legs) {
+        if (!leg.model) {
+          prepared.push(leg);
+          continue;
+        }
+        if (leg.automatic && !resolveEntry(leg.model, available)) {
+          unavailable.push(leg.label);
+          continue;
+        }
+        const pick = await this.selection(leg.model, req.effort, available);
+        const id = pick.model!;
+        if (effective.has(id)) {
+          if (leg.automatic) continue;
+          throw new InvalidRequestError(
+            `Council selections resolve to the same model "${id}" more than once. ` +
+              "Choose distinct listed variants; nothing was dispatched.",
+          );
+        }
+        effective.add(id);
+        prepared.push({ ...leg, model: id });
+      }
+      if (!prepared.length) {
+        throw new InvalidRequestError(
+          "None of the default council's models are listed by this agy account. " +
+            "Pass explicit available models or use a single-model call; nothing was dispatched.",
+        );
+      }
+      // Missing automatic members are visible without spending a paid leg.
+      for (const label of unavailable)
+        prepared.push({ label: `${label} (unavailable)`, automatic: true });
+    }
     return Promise.all(
-      legs.map(async (leg) => {
+      prepared.map(async (leg) => {
+        if (leg.automatic && !leg.model)
+          return {
+            label: leg.label,
+            error: "Not offered in the current model inventory; skipped without dispatch.",
+          };
         try {
+          const {
+            tasks: _tasks,
+            models: _models,
+            ...singleArgs
+          } = req.args as Record<string, unknown>;
           const delegation = await this.run({
             ...req,
             ...(leg.model ? { model: leg.model } : {}),
+            ...(leg.model
+              ? { modelOrigin: leg.automatic ? ("automatic" as const) : ("explicit" as const) }
+              : {}),
+            // The model is now a canonical fixed variant. Its tier was already
+            // reconciled above; a second inherited effort must not re-tier it.
+            ...(leg.model ? { effort: undefined } : {}),
             // `!== undefined`, not truthiness: an empty task used to fall back to
             // the joined prompt of every task, running all the others again.
-            ...(leg.prompt !== undefined
-              ? { args: { ...(req.args as object), prompt: leg.prompt } }
-              : {}),
+            ...(leg.prompt !== undefined ? { args: { ...singleArgs, prompt: leg.prompt } } : {}),
           });
           return { label: leg.label, delegation };
         } catch (err) {

@@ -1,5 +1,13 @@
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { randomUUID } from "node:crypto";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import path from "node:path";
 import type { CooldownStore } from "./quota.js";
@@ -19,9 +27,6 @@ function parse(raw: string): Record<string, number> {
   );
 }
 
-/** How many read-merge-write passes a save makes before accepting a lost race. */
-const SAVE_PASSES = 3;
-
 /** Both sets of cooldowns, keeping the later expiry where they disagree. */
 function merge(a: Record<string, number>, b: Record<string, number>): Record<string, number> {
   const out = { ...a };
@@ -38,29 +43,46 @@ function merge(a: Record<string, number>, b: Record<string, number>): Record<str
  * in memory it evaporated on restart and each client re-burned a call to learn
  * the same thing.
  *
- * Two servers can learn different 429s at the same moment, so a save merges
- * with what is on disk rather than replacing it. Writes go to a uniquely named
- * temp file and are renamed into place, so a reader sees a whole file or none.
- * Read-merge-rename is not atomic across processes, so a save reads the file
- * back and merges again while another writer's rename has dropped one of its
- * entries — bounded, because each pass can only lose to a writer that renamed
- * in between. When the file cannot be written at all, this process still keeps
- * its own entries.
+ * Each model/expiry pair has its own immutable record. Concurrent writers
+ * cannot replace each other's snapshots: load takes the maximum expiry across
+ * records. A temporary file is atomically renamed only to an identical record
+ * key, and cleanup removes expired records only. The older cooldowns.json is
+ * still read for compatibility, but is never rewritten by this implementation.
+ * An unwritable cache degrades to in-process cooldowns.
  */
 export class FileCooldownStore implements CooldownStore {
-  private readonly file: string;
+  private readonly legacyFile: string;
+  private readonly recordsDir: string;
   private own: Record<string, number> = {};
 
   constructor(dir: string = cacheDir()) {
-    this.file = path.join(dir, "cooldowns.json");
+    this.legacyFile = path.join(dir, "cooldowns.json");
+    this.recordsDir = path.join(dir, "cooldowns.d");
   }
 
-  private fromDisk(): Record<string, number> {
+  private read(file: string): Record<string, number> {
     try {
-      return parse(readFileSync(this.file, "utf8"));
+      return parse(readFileSync(file, "utf8"));
     } catch {
       return {};
     }
+  }
+
+  private records(): string[] {
+    try {
+      return readdirSync(this.recordsDir).filter((file) =>
+        /^[a-f0-9]{64}\.[\d.e+-]+\.json$/.test(file),
+      );
+    } catch {
+      return [];
+    }
+  }
+
+  private fromDisk(): Record<string, number> {
+    let entries = this.read(this.legacyFile);
+    for (const file of this.records())
+      entries = merge(entries, this.read(path.join(this.recordsDir, file)));
+    return entries;
   }
 
   load(): Record<string, number> {
@@ -68,32 +90,47 @@ export class FileCooldownStore implements CooldownStore {
   }
 
   save(entries: Record<string, number>, now: number): void {
-    this.own = { ...entries };
+    this.own = merge(this.own, entries);
+    for (const [model, until] of Object.entries(this.own)) {
+      if (!Number.isFinite(until) || until <= now) delete this.own[model];
+    }
     try {
-      mkdirSync(path.dirname(this.file), { recursive: true });
+      mkdirSync(this.recordsDir, { recursive: true, mode: 0o700 });
     } catch {
       return; // A read-only cache dir degrades to in-process cooldowns; not fatal.
     }
-    for (let pass = 0; pass < SAVE_PASSES; pass++) {
-      const merged = merge(this.fromDisk(), entries);
-      // Entries the caller dropped as expired stay dropped, on the caller's clock.
-      for (const [model, until] of Object.entries(merged)) if (until <= now) delete merged[model];
-      if (!this.write(merged)) return;
-      const onDisk = this.fromDisk();
-      if (Object.entries(merged).every(([m, until]) => (onDisk[m] ?? 0) >= until)) return;
+    for (const [model, until] of Object.entries(this.own)) this.write(model, until);
+    for (const file of this.records()) {
+      const fullPath = path.join(this.recordsDir, file);
+      const stored = Object.values(this.read(fullPath));
+      if (stored.length && stored.every((until) => until <= now)) {
+        try {
+          rmSync(fullPath, { force: true });
+        } catch {
+          /* Best-effort expiration only. */
+        }
+      }
     }
   }
 
-  /** Whole-file replace; false when the file could not be written at all. */
-  private write(entries: Record<string, number>): boolean {
-    const tmp = `${this.file}.${process.pid}.${randomUUID()}.tmp`;
+  private write(model: string, until: number): void {
+    const key = createHash("sha256").update(model).digest("hex");
+    const file = path.join(this.recordsDir, `${key}.${until}.json`);
+    if (existsSync(file)) return;
+    const tmp = `${file}.${process.pid}.${randomUUID()}.tmp`;
     try {
-      writeFileSync(tmp, JSON.stringify(entries), "utf8");
-      renameSync(tmp, this.file);
-      return true;
+      writeFileSync(tmp, JSON.stringify({ [model]: until }), {
+        encoding: "utf8",
+        mode: 0o600,
+        flag: "wx",
+      });
+      renameSync(tmp, file);
     } catch {
-      rmSync(tmp, { force: true });
-      return false;
+      try {
+        rmSync(tmp, { force: true });
+      } catch {
+        /* Keep the in-process entry. */
+      }
     }
   }
 }

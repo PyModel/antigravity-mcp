@@ -230,16 +230,20 @@ describe("runAgy", () => {
     expect(err.policy.failover).toBe(false);
   });
 
-  it("kills the child and throws QuotaError when the log shows a 429", async () => {
-    const agy = fakeAgy({ neverExit: true, log: `${LOG_429}\n` });
-    await expect(
-      run({ prompt: "q", cwd: "/repo", model: "Gemini 3.7 Flash (Medium)", timeoutSec: 600 }, agy),
-    ).rejects.toThrow(QuotaError);
-    expect(agy.kills).toContain("SIGTERM");
+  it("lets agy recover a transient 429 in-process without killing or replaying the turn", async () => {
+    const hold = new Promise<void>((resolve) => setTimeout(resolve, 30));
+    const agy = fakeAgy({ hold, answer: "recovered", log: `${LOG_429}\n` });
+    const result = await run({ prompt: "q", cwd: "/repo", timeoutSec: 600 }, agy);
+    expect(result.output).toBe("recovered");
+    expect(agy.kills).toEqual([]);
   });
 
   it("includes the reset time in the QuotaError", async () => {
-    const agy = fakeAgy({ neverExit: true, log: `${LOG_429}\n` });
+    const agy = fakeAgy({
+      envelope: { status: "ERROR", error: "RESOURCE_EXHAUSTED" },
+      exitCode: 3,
+      log: `${LOG_429}\n`,
+    });
     const err = (await run({ prompt: "q", cwd: "/repo", model: "M", timeoutSec: 600 }, agy).catch(
       (e) => e,
     )) as QuotaError;
@@ -286,11 +290,11 @@ describe("runAgy", () => {
     expect(agy.kills.length).toBeGreaterThan(0);
   });
 
-  it("treats empty output with a quota log as QuotaError, not success", async () => {
+  it("does not turn an empty result into quota exhaustion merely because an earlier log had a 429", async () => {
     const agy = fakeAgy({ answer: "", exitCode: 0, log: `${LOG_429}\n` });
     await expect(
       run({ prompt: "q", cwd: "/repo", model: "M", timeoutSec: 600 }, agy),
-    ).rejects.toThrow(QuotaError);
+    ).rejects.toMatchObject({ kind: "empty" });
   });
 
   it("names the empty-response case without blaming the print-timeout", async () => {

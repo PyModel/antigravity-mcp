@@ -1,0 +1,26 @@
+{
+  "extra-root": {
+    "changed": true,
+    "readOnlyViolation": false,
+    "status": "completed"
+  },
+  "ignored-file": {
+    "changed": true,
+    "readOnlyViolation": false,
+    "status": "completed"
+  },
+  "nested-cwd": {
+    "changed": true,
+    "readOnlyViolation": false,
+    "status": "completed"
+  },
+  "stale-outdir": {
+    "runningNewJobExposesOldCompletion": true,
+    "finalPathPointsToPreviousText": true,
+    "newStatus": "failed"
+  },
+  "abort": {
+    "relayStatus": "aborted",
+    "descendantStillRunning": true
+  }
+}

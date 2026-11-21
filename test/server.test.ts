@@ -151,7 +151,7 @@ describe("createToolHandler", () => {
     const { handler } = handlerFor("delegate");
     const text = textOf(await handler({ prompt: "do x" }));
     expect(text).toContain("the answer");
-    expect(text).toContain("model: Gemini 3.8 Flash (High)");
+    expect(text).toContain("model: gemini-3.8-flash-high");
     expect(text).toContain("session: sess-1");
     expect(text).not.toContain("sess-fallback");
   });
@@ -183,27 +183,27 @@ describe("createToolHandler", () => {
   it("turns an explicit effort into the sibling tier of a tiered model, not --effort", async () => {
     const { handler, agy } = handlerFor("delegate");
     await handler({ prompt: "x", effort: "medium" });
-    expect(valueOf(agy.runs[0]!, "--model")).toBe("Gemini 3.8 Flash (Medium)");
+    expect(valueOf(agy.runs[0]!, "--model")).toBe("gemini-3.8-flash-medium");
     expect(agy.runs[0]).not.toContain("--effort");
   });
 
-  it("keeps a tiered model and drops --effort when no sibling exists at that tier", async () => {
+  it("rejects an unsupported effort instead of silently retaining another tier", async () => {
     const { handler, agy } = handlerFor("delegate");
-    await handler({ prompt: "x", effort: "low" });
-    expect(valueOf(agy.runs[0]!, "--model")).toBe("Gemini 3.8 Flash (High)");
-    expect(agy.runs[0]).not.toContain("--effort");
+    const result = await handler({ prompt: "x", effort: "low" });
+    expect(result.isError).toBe(true);
+    expect(agy.runs).toHaveLength(0);
   });
 
-  it("passes --effort only to a model that carries no tier of its own", async () => {
+  it("does not invent effort support for an opaque untiered model", async () => {
     const agy = fakeAgy({ answer: "the answer" });
     const { cfg, delegator } = makeDelegator({
       spawn: agy.spawn,
       listing: async () => "Fetching available models...\ngpt-oss-120b\tGPT-OSS 120B\n",
     });
     const handler = createToolHandler(toolNamed("delegate"), cfg, delegator);
-    await handler({ prompt: "x", model: "GPT-OSS 120B", effort: "low" });
-    expect(valueOf(agy.runs[0]!, "--model")).toBe("GPT-OSS 120B");
-    expect(valueOf(agy.runs[0]!, "--effort")).toBe("low");
+    const result = await handler({ prompt: "x", model: "GPT-OSS 120B", effort: "low" });
+    expect(result.isError).toBe(true);
+    expect(agy.runs).toHaveLength(0);
   });
 
   describe("set_model gate", () => {
@@ -226,15 +226,13 @@ describe("createToolHandler", () => {
       const lookup = createToolHandler(toolNamed("web_lookup"), cfg, delegator);
       const gated = await lookup({ query: "docs" });
       expect(textOf(gated)).toContain(
-        "Proceed with the default — Gemini 3.8 Flash (High) at high effort — or change",
+        "Proceed with the default — gemini-3.8-flash-high at high effort — or change",
       );
 
       const set = createToolHandler(toolNamed("set_model"), cfg, delegator);
-      expect(textOf(await set({}))).toContain(
-        "model set to Gemini 3.8 Flash (High) at high effort",
-      );
+      expect(textOf(await set({}))).toContain("model set to gemini-3.8-flash-high at high effort");
       await lookup({ query: "docs" });
-      expect(agy.modelOf(agy.runs[0]!)).toBe("Gemini 3.8 Flash (High)");
+      expect(agy.modelOf(agy.runs[0]!)).toBe("gemini-3.8-flash-high");
     });
 
     it("applies a changed effort to the default when the user keeps the model", async () => {
@@ -243,31 +241,31 @@ describe("createToolHandler", () => {
       });
       const set = createToolHandler(toolNamed("set_model"), cfg, delegator);
       expect(textOf(await set({ effort: "medium" }))).toContain(
-        "model set to Gemini 3.8 Flash (Medium) at medium effort",
+        "model set to gemini-3.8-flash-medium at medium effort",
       );
     });
 
     it("lets an explicit model through the gate for that one call", async () => {
       const { handler, agy } = handlerFor("web_lookup", { askModel: true });
-      await handler({ query: "docs", model: "Gemini 3.1 Pro (High)" });
-      expect(agy.modelOf(agy.runs[0]!)).toBe("Gemini 3.1 Pro (High)");
+      await handler({ query: "docs", model: "gemini-3.1-pro-high" });
+      expect(agy.modelOf(agy.runs[0]!)).toBe("gemini-3.1-pro-high");
     });
 
     it("routes every later call to the chosen model and tier first, keeping the chain as fallback", async () => {
       const agy = fakeAgy({ answer: "the answer" });
       const { cfg, delegator } = makeDelegator({ spawn: agy.spawn, cfg: { askModel: true } });
       const set = createToolHandler(toolNamed("set_model"), cfg, delegator);
-      const res = await set({ model: "gemini-3.1-pro-high", effort: "low" });
-      expect(textOf(res)).toContain("model set to Gemini 3.1 Pro (Low) at low effort");
+      const res = await set({ model: "gemini-pro@latest", effort: "low" });
+      expect(textOf(res)).toContain("model set to gemini-3.1-pro-low at low effort");
 
       const lookup = createToolHandler(toolNamed("web_lookup"), cfg, delegator);
       await lookup({ query: "docs" });
-      expect(agy.modelOf(agy.runs[0]!)).toBe("Gemini 3.1 Pro (Low)");
+      expect(agy.modelOf(agy.runs[0]!)).toBe("gemini-3.1-pro-low");
       expect(agy.runs[0]).not.toContain("--effort");
 
       const status = createToolHandler(toolNamed("agy_status"), cfg, delegator);
       expect(textOf(await status({}))).toContain(
-        "model choice (set_model): Gemini 3.1 Pro (Low) at low effort",
+        "model choice (set_model): gemini-3.1-pro-low at low effort",
       );
     });
 
@@ -280,23 +278,21 @@ describe("createToolHandler", () => {
       const asked: ElicitRequestFormParams[] = [];
       const elicit: Elicit = async (params) => {
         asked.push(params);
-        return { action: "accept", content: { model: "Gemini 3.1 Pro (High)", effort: "low" } };
+        return { action: "accept", content: { model: "gemini-3.1-pro-low" } };
       };
       const handler = createToolHandler(toolNamed("web_lookup"), cfg, delegator, () => elicit);
       const res = await handler({ query: "docs" });
       expect(res.isError).toBeUndefined();
       expect(asked).toHaveLength(1);
-      expect(asked[0]!.message).toContain(
-        "Proceed with the default — Gemini 3.8 Flash (High) at high effort",
-      );
+      expect(asked[0]!.message).toContain("Proceed with the default — gemini-3.8-flash-high");
       const modelField = asked[0]!.requestedSchema.properties.model as {
         default?: string;
         oneOf: unknown[];
       };
-      expect(modelField.default).toBe("Gemini 3.8 Flash (High)");
+      expect(modelField.default).toBe("gemini-3.8-flash-high");
       expect(modelField.oneOf.length).toBeGreaterThan(3);
-      expect(agy.modelOf(agy.runs[0]!)).toBe("Gemini 3.1 Pro (Low)");
-      expect(delegator.status().preference?.model).toBe("Gemini 3.1 Pro (Low)");
+      expect(agy.modelOf(agy.runs[0]!)).toBe("gemini-3.1-pro-low");
+      expect(delegator.status().preference?.model).toBe("gemini-3.1-pro-low");
 
       // Asked once: the second call goes straight through.
       await handler({ query: "again" });
@@ -312,7 +308,7 @@ describe("createToolHandler", () => {
       const elicit: Elicit = async () => ({ action: "accept", content: {} });
       const handler = createToolHandler(toolNamed("web_lookup"), cfg, delegator, () => elicit);
       await handler({ query: "docs" });
-      expect(agy.modelOf(agy.runs[0]!)).toBe("Gemini 3.8 Flash (High)");
+      expect(agy.modelOf(agy.runs[0]!)).toBe("gemini-3.8-flash-high");
     });
 
     it("delegates nothing when the user declines the form", async () => {
@@ -441,7 +437,7 @@ describe("createToolHandler", () => {
 
   it("strict mode marks a fan-out whose every leg failed, like any other failure", async () => {
     const { handler } = handlerFor("delegate_many", { onFailure: "strict" }, exploding());
-    const res = await handler({ prompt: "q", models: ["Gemini 3.8 Flash (High)"] });
+    const res = await handler({ prompt: "q", models: ["gemini-3.8-flash-high"] });
     expect(res.isError).toBe(true);
     expect(textOf(res)).toContain("0 of 1 legs answered");
     expect(textOf(res)).toContain("strict mode");
@@ -456,12 +452,12 @@ describe("createToolHandler", () => {
     const agy = fakeAgy((args) => ({ answer: `answer from ${valueOf(args, "--model")}` }));
     const { handler } = handlerFor("delegate_many", {}, agy);
     const text = textOf(
-      await handler({ prompt: "q", models: ["Gemini 3.8 Flash (High)", "Gemini 3.1 Pro (High)"] }),
+      await handler({ prompt: "q", models: ["gemini-3.8-flash-high", "gemini-3.1-pro-high"] }),
     );
     expect(text).toContain("2 of 2 legs answered");
     // The leg heading must carry the per-call nonce, or a payload could forge it.
-    expect(text).toMatch(/\[claude-agy-mcp [0-9a-f]{12}\] leg: Gemini 3\.8 Flash \(High\)/);
-    expect(text).toContain("answer from Gemini 3.1 Pro (High)");
+    expect(text).toMatch(/\[claude-agy-mcp [0-9a-f]{12}\] leg: gemini-3\.8-flash-high/);
+    expect(text).toContain("answer from gemini-3.1-pro-high");
     expect(agy.runs).toHaveLength(2);
   });
 });

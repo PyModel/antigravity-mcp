@@ -1,7 +1,7 @@
 {
   "name": "@pymodel/claude-agy-mcp",
-  "version": "3.1.0",
-  "description": "MCP bridge that lets Claude Code delegate heavy tasks to the Antigravity CLI (agy) — purpose-built tools, model routing with fallback, and multi-turn session continuity.",
+  "version": "3.2.0",
+  "description": "MCP bridge for Antigravity CLI delegation, account-aware model routing, and multi-turn sessions.",
   "mcpName": "io.github.PyModel/claude-agy-mcp",
   "type": "module",
   "bin": {
@@ -25,7 +25,9 @@
     "typecheck": "tsc --noEmit",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "prepare": "husky",
+    "prepare": "node -e \"if(process.env.NODE_ENV!=='production'&&process.env.HUSKY!=='0')import('husky').then(m=>m.default())\"",
+    "check:release": "node scripts/check-release.mjs",
+    "test:package": "node scripts/smoke-package.mjs",
     "install-skills": "node scripts/install-skills.mjs"
   },
   "keywords": [
@@ -43,8 +45,8 @@
   },
   "license": "MIT",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.12.0",
-    "zod": "^4.6.2"
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@commitlint/cli": "^21.0.2",
@@ -54,7 +56,7 @@
     "lint-staged": "^17.5.1",
     "prettier": "^3.8.4",
     "typescript": "^7.0.2",
-    "vitest": "^5.0.0",
+    "vitest": "^5.0.3",
     "esbuild": "^0.28.2"
   },
   "lint-staged": {

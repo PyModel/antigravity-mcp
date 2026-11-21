@@ -74,4 +74,48 @@ describe("LogTail", () => {
       cleanup();
     }
   });
+
+  it("caps an unterminated line by raw bytes across multiple reads", async () => {
+    const { file, cleanup } = scratch();
+    try {
+      const tail = new LogTail(file, 16);
+      writeFileSync(file, "é".repeat(8));
+      expect(await tail.read()).toBe("");
+      appendFileSync(file, "x");
+      await expect(tail.read()).rejects.toMatchObject({
+        name: "OutputLimitError",
+        limitBytes: 16,
+        finishedReason: "output_limit",
+      });
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("does not reset the total byte budget when complete lines are drained", async () => {
+    const { file, cleanup } = scratch();
+    try {
+      const tail = new LogTail(file, 8);
+      writeFileSync(file, "one\n");
+      expect(await tail.read()).toBe("one\n");
+      appendFileSync(file, "two\n");
+      expect(await tail.read()).toBe("two\n");
+      appendFileSync(file, "x");
+      await expect(tail.flush()).rejects.toMatchObject({ finishedReason: "output_limit" });
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("serializes a final flush with an overlapping polling read", async () => {
+    const { file, cleanup } = scratch();
+    try {
+      const tail = new LogTail(file);
+      writeFileSync(file, "complete\npartial");
+      const [read, flush] = await Promise.all([tail.read(), tail.flush()]);
+      expect(read + flush).toBe("complete\npartial");
+    } finally {
+      cleanup();
+    }
+  });
 });

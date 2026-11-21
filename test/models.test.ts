@@ -12,6 +12,7 @@ import {
   listModels,
 } from "../src/models.js";
 import { LISTING } from "./support.js";
+import { GEMINI4_LISTING } from "./gemini4-fixture.js";
 
 describe("parseListing", () => {
   it("returns one row per tab-separated line, keeping id and display name apart", () => {
@@ -59,19 +60,19 @@ describe("resolveEntry", () => {
   const available = parseListing(LISTING);
 
   it("accepts an exact display name", () => {
-    expect(resolveEntry("Gemini 3.1 Pro (High)", available)).toBe("Gemini 3.1 Pro (High)");
+    expect(resolveEntry("Gemini 3.1 Pro (High)", available)).toBe("gemini-3.1-pro-high");
   });
 
-  it("accepts an id and returns the display name", () => {
-    expect(resolveEntry("gemini-3.7-flash-high", available)).toBe("Gemini 3.7 Flash (High)");
+  it("preserves a canonical id for execution", () => {
+    expect(resolveEntry("gemini-3.7-flash-high", available)).toBe("gemini-3.7-flash-high");
   });
 
   it("resolves a family selector to the newest version at that effort", () => {
-    expect(resolveEntry("gemini-flash@latest-high", available)).toBe("Gemini 3.8 Flash (High)");
+    expect(resolveEntry("gemini-flash@latest-high", available)).toBe("gemini-3.8-flash-high");
   });
 
   it("resolves a pinned version selector", () => {
-    expect(resolveEntry("gemini-flash@3.7-medium", available)).toBe("Gemini 3.7 Flash (Medium)");
+    expect(resolveEntry("gemini-flash@3.7-medium", available)).toBe("gemini-3.7-flash-medium");
   });
 
   it("returns undefined for a family that is not offered", () => {
@@ -92,9 +93,9 @@ describe("ModelRegistry.resolveChain", () => {
       defaultModel: "Gemini 3.7 Flash (High)",
     });
     expect(r.models).toEqual([
-      "Gemini 3.8 Flash (Medium)",
-      "Gemini 3.1 Pro (High)",
-      "Gemini 3.7 Flash (High)",
+      "gemini-3.8-flash-medium",
+      "gemini-3.1-pro-high",
+      "gemini-3.7-flash-high",
     ]);
   });
 
@@ -103,7 +104,7 @@ describe("ModelRegistry.resolveChain", () => {
       chain: ["gemini-flash@latest-high"],
       defaultModel: "Gemini 3.8 Flash (High)",
     });
-    expect(r.models).toEqual(["Gemini 3.8 Flash (High)"]);
+    expect(r.models).toEqual(["gemini-3.8-flash-high"]);
   });
 
   it("uses an explicit model when it resolves", async () => {
@@ -111,7 +112,7 @@ describe("ModelRegistry.resolveChain", () => {
       explicit: "Gemini 3.1 Pro (High)",
       chain: ["gemini-flash@latest-high"],
     });
-    expect(r.models).toEqual(["Gemini 3.1 Pro (High)"]);
+    expect(r.models).toEqual(["gemini-3.1-pro-high"]);
   });
 
   it("throws on an explicit model the listing does not offer, showing the options", async () => {
@@ -156,8 +157,8 @@ describe("ModelRegistry.resolveChain", () => {
       reg.resolveChain({ chain: ["Gemini 3.1 Pro (High)"] }),
     ]);
     expect(calls).toBe(1);
-    expect(a.models).toEqual(["Gemini 3.7 Flash (High)"]);
-    expect(b.models).toEqual(["Gemini 3.1 Pro (High)"]);
+    expect(a.models).toEqual(["gemini-3.7-flash-high"]);
+    expect(b.models).toEqual(["gemini-3.1-pro-high"]);
   });
 
   it("retries the listing after a transient failure instead of caching null forever", async () => {
@@ -170,7 +171,7 @@ describe("ModelRegistry.resolveChain", () => {
       undefined,
     ]);
     expect((await reg.resolveChain({ chain: ["Gemini 3.1 Pro (High)"] })).models).toEqual([
-      "Gemini 3.1 Pro (High)",
+      "gemini-3.1-pro-high",
     ]);
   });
 });
@@ -197,37 +198,42 @@ describe("listModels", () => {
 describe("pickTier", () => {
   const listing = parseListing(LISTING);
 
+  it("gives exact IDs precedence over colliding labels on every selection step", () => {
+    const opaque = parseListing("first\tsecond\nsecond\tCustom B\n");
+    expect(resolveEntry("second", opaque)).toBe("second");
+    expect(pickTier("second", undefined, opaque)).toEqual({ model: "second" });
+    const ambiguous = parseListing("first\tShared\nsecond\tShared\n");
+    expect(() => pickTier("Shared", undefined, ambiguous)).toThrow(/not in the current/);
+  });
+
   it("uses a tiered model as-is and sends no --effort when the tiers agree or none is asked", () => {
     expect(pickTier("Gemini 3.8 Flash (High)", undefined, listing)).toEqual({
-      model: "Gemini 3.8 Flash (High)",
+      model: "gemini-3.8-flash-high",
     });
     expect(pickTier("Gemini 3.8 Flash (High)", "high", listing)).toEqual({
-      model: "Gemini 3.8 Flash (High)",
+      model: "gemini-3.8-flash-high",
     });
   });
 
   it("selects the sibling at the asked tier within the same family and version", () => {
     expect(pickTier("Gemini 3.8 Flash (High)", "medium", listing)).toEqual({
-      model: "Gemini 3.8 Flash (Medium)",
+      model: "gemini-3.8-flash-medium",
     });
     expect(pickTier("Gemini 3.1 Pro (High)", "low", listing)).toEqual({
-      model: "Gemini 3.1 Pro (Low)",
+      model: "gemini-3.1-pro-low",
     });
   });
 
-  it("keeps the model when no sibling exists at that tier, still without --effort", () => {
-    expect(pickTier("Gemini 3.8 Flash (High)", "low", listing)).toEqual({
-      model: "Gemini 3.8 Flash (High)",
-    });
+  it("rejects an unavailable tier instead of silently retaining another effort", () => {
+    expect(() => pickTier("Gemini 3.8 Flash (High)", "low", listing)).toThrow(
+      /does not offer effort/,
+    );
   });
 
-  it("passes --effort through for a model with no tier in its name", () => {
+  it("keeps opaque models selectable without assuming effort support", () => {
     const untiered = parseListing("gpt-oss-120b\tGPT-OSS 120B\n");
-    expect(pickTier("GPT-OSS 120B", "low", untiered)).toEqual({
-      model: "GPT-OSS 120B",
-      effort: "low",
-    });
-    expect(pickTier("GPT-OSS 120B", undefined, untiered)).toEqual({ model: "GPT-OSS 120B" });
+    expect(() => pickTier("GPT-OSS 120B", "low", untiered)).toThrow(/fixed; omit effort/);
+    expect(pickTier("GPT-OSS 120B", undefined, untiered)).toEqual({ model: "gpt-oss-120b" });
   });
 });
 
@@ -247,6 +253,93 @@ describe("version ordering (test-gap: fixtures could not distinguish it)", () =>
       chain: ["gemini-flash@latest-high"],
       defaultModel: "Gemini 3.8 Flash (High)",
     });
-    expect(r.models[0]).toBe("Gemini 3.10 Flash (High)");
+    expect(r.models[0]).toBe("gemini-3.10-flash-high");
+  });
+});
+
+describe("current account inventory contract", () => {
+  const inventory = parseListing(GEMINI4_LISTING);
+
+  it("keeps all 14 supplied Gemini 4 variants and three opaque Orchestrators selectable", () => {
+    expect(inventory).toHaveLength(17);
+    for (const model of inventory) {
+      expect(resolveEntry(model.id, inventory)).toBe(model.id);
+      expect(resolveEntry(model.name, inventory)).toBe(model.id);
+    }
+    expect(inventory.find((model) => model.id === "gemini-pro-orchestrator")).toMatchObject({
+      name: "Orchestrator (Carbon)",
+    });
+    expect(
+      inventory.find((model) => model.id === "gemini-pro-orchestrator")?.effort,
+    ).toBeUndefined();
+  });
+
+  it("resolves xhigh only where the account actually offers it", () => {
+    expect(resolveEntry("gemini-neon@latest-xhigh", inventory)).toBe("gemini-4-neon-xhigh");
+    expect(resolveEntry("gemini-hydrogen@4-xhigh", inventory)).toBe("gemini-4-hydrogen-xhigh");
+    expect(resolveEntry("gemini-carbon@latest-xhigh", inventory)).toBeUndefined();
+    expect(() => pickTier("gemini-4-carbon-high", "xhigh", inventory)).toThrow(/does not offer/);
+  });
+
+  it("recognises max vocabulary without inventing a max variant", () => {
+    expect(resolveEntry("gemini-neon@latest-max", inventory)).toBeUndefined();
+    const future = parseListing(GEMINI4_LISTING + "gemini-4-neon-max\tGemini 4 Neon (Max)\n");
+    expect(resolveEntry("gemini-neon@latest-max", future)).toBe("gemini-4-neon-max");
+  });
+
+  it("selects a deterministic untiered policy independent of listing order", () => {
+    expect(resolveEntry("gemini-neon@latest", inventory)).toBe("gemini-4-neon-medium");
+    expect(resolveEntry("gemini-neon@latest", [...inventory].reverse())).toBe(
+      "gemini-4-neon-medium",
+    );
+  });
+
+  it("does not guess from an ambiguous display label or malformed selector", () => {
+    const duplicate = parseListing(
+      "first\tShared label\nsecond\tShared label\nfirst\tShared label\n",
+    );
+    expect(duplicate).toHaveLength(2);
+    expect(resolveEntry("Shared label", duplicate)).toBeUndefined();
+    expect(resolveEntry("first", duplicate)).toBe("first");
+    for (const malformed of ["gemini-neon@4..0", "gemini-neon@.4", "gemini-neon@4."]) {
+      expect(resolveEntry(malformed, inventory)).toBeUndefined();
+    }
+  });
+});
+
+describe("inventory refresh", () => {
+  it("refreshes a successful listing after its TTL so account changes become visible", async () => {
+    let now = 0;
+    let calls = 0;
+    const registry = new ModelRegistry(async () => (++calls === 1 ? LISTING : GEMINI4_LISTING), {
+      ttlMs: 100,
+      now: () => now,
+    });
+    const first = await registry.available();
+    now = 99;
+    expect(await registry.available()).toBe(first);
+    expect(calls).toBe(1);
+    now = 100;
+    expect((await registry.available())?.[0]?.id).toBe("gemini-4-neon-low");
+    expect(calls).toBe(2);
+  });
+
+  it("does not let an older in-flight listing overwrite one fetched after invalidation", async () => {
+    let releaseOld!: (listing: string) => void;
+    let calls = 0;
+    const registry = new ModelRegistry(() => {
+      if (++calls === 1)
+        return new Promise((resolve) => {
+          releaseOld = resolve;
+        });
+      return Promise.resolve(GEMINI4_LISTING);
+    });
+    const old = registry.available();
+    registry.invalidate();
+    const fresh = await registry.available();
+    releaseOld(LISTING);
+    expect(await old).toEqual(fresh);
+    expect(await registry.available()).toEqual(fresh);
+    expect(calls).toBe(2);
   });
 });

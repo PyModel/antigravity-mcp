@@ -1,17 +1,17 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.PyModel/claude-agy-mcp",
-  "description": "Delegate heavy tasks from Claude Code to the Antigravity CLI (Gemini) with quota-aware failover.",
+  "description": "Delegate tasks to Antigravity CLI with account-aware model selection, cooldowns, and multi-turn sessions.",
   "repository": {
     "url": "https://github.com/PyModel/claude-agy-mcp",
     "source": "github"
   },
-  "version": "2.0.0",
+  "version": "3.2.0",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "@pymodel/claude-agy-mcp",
-      "version": "2.0.0",
+      "version": "3.2.0",
       "transport": {
         "type": "stdio"
       },
@@ -31,7 +31,7 @@
           "name": "AGY_TIMEOUT"
         },
         {
-          "description": "Absolute runtime ceiling in seconds (default 3600); the bridge does not kill on inactivity, only on cancellation, quota exhaustion, or this ceiling",
+          "description": "Absolute runtime ceiling in seconds (default 3600); idle periods and intermediate native retries do not terminate a run",
           "isRequired": false,
           "format": "number",
           "isSecret": false,
@@ -45,7 +45,7 @@
           "name": "AGY_MAX_OUTPUT_CHARS"
         },
         {
-          "description": "Fallback model when no chain entry is available (defaults to Gemini 3.7 Flash (High))",
+          "description": "Default proposed by set_model and last-resort automatic candidate (gemini-flash@latest-high); resolved against the account inventory",
           "isRequired": false,
           "format": "string",
           "isSecret": false,

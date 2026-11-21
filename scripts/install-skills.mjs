@@ -17,7 +17,18 @@
  *
  * Already installed, globally or in a project: `claude-agy-mcp-install-skills`.
  */
-import { cp, lstat, mkdir, readdir, readFile, rm, stat } from "node:fs/promises";
+import {
+  cp,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  realpath,
+  rename,
+  rm,
+  stat,
+} from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -76,19 +87,111 @@ async function isSymlink(dest) {
 
 async function install(skill, parent, force) {
   const dest = path.join(parent, skill.name);
-  if (!force && (await isSymlink(dest))) return { dest, skipped: "symlink" };
-  // Replace rather than merge: a half-updated skill whose SKILL.md is new and
-  // whose references are stale is worse than either version on its own.
-  await rm(dest, { recursive: true, force: true });
   await mkdir(parent, { recursive: true });
-  await cp(path.join(SOURCE, skill.name), dest, { recursive: true });
-  return { dest };
+  const sourceRoot = await realpath(SOURCE);
+  const targetRoot = await realpath(parent);
+  if (targetRoot === sourceRoot || targetRoot.startsWith(`${sourceRoot}${path.sep}`)) {
+    throw new Error("the install directory cannot be the bundled skills source or inside it");
+  }
+  const lock = path.join(parent, `.${skill.name}.install-lock`);
+  try {
+    await mkdir(lock);
+  } catch (error) {
+    if (error.code === "EEXIST") {
+      throw new Error(`another installation owns ${lock}; inspect it before retrying`);
+    }
+    throw error;
+  }
+  let staging;
+  let previous;
+  let preserveBackup = false;
+  try {
+    if (!force && (await isSymlink(dest))) return { dest, skipped: "symlink" };
+    staging = await mkdtemp(path.join(parent, `.${skill.name}.install-`));
+    const next = path.join(staging, "next");
+    // Finish copying before touching the installed version. Staging beside the
+    // destination keeps both publication renames on the same filesystem.
+    await cp(path.join(SOURCE, skill.name), next, { recursive: true });
+    await readFile(path.join(next, "SKILL.md"), "utf8");
+    try {
+      await lstat(dest);
+      previous = path.join(staging, "previous");
+      await rename(dest, previous);
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+      previous = undefined;
+    }
+    try {
+      await rename(next, dest);
+    } catch (error) {
+      if (previous) {
+        try {
+          await rename(previous, dest);
+          previous = undefined;
+        } catch (rollbackError) {
+          preserveBackup = true;
+          throw new Error(
+            `publication failed (${error.message}); rollback failed (${rollbackError.message}); ` +
+              `the previous skill is preserved at ${previous}`,
+          );
+        }
+      }
+      throw error;
+    }
+    return { dest };
+  } finally {
+    // A failed rollback must retain its recovery copy. A completed publication
+    // removes stale references by replacing the directory instead of merging.
+    try {
+      if (staging && !preserveBackup) await rm(staging, { recursive: true, force: true });
+    } finally {
+      await rm(lock, { recursive: true, force: true });
+    }
+  }
 }
 
-const args = process.argv.slice(2);
-const explicit = args.includes("--dir") ? args[args.indexOf("--dir") + 1] : undefined;
-const listOnly = args.includes("--list");
-const force = args.includes("--force");
+function parseArgs(args) {
+  const options = { explicit: undefined, listOnly: false, force: false, help: false };
+  for (let i = 0; i < args.length; i++) {
+    switch (args[i]) {
+      case "--dir": {
+        if (options.explicit !== undefined) throw new Error("--dir may be supplied only once");
+        const value = args[++i];
+        if (!value?.trim() || value.startsWith("-"))
+          throw new Error("--dir requires a directory path");
+        options.explicit = value;
+        break;
+      }
+      case "--list":
+        options.listOnly = true;
+        break;
+      case "--force":
+        options.force = true;
+        break;
+      case "--help":
+      case "-h":
+        options.help = true;
+        break;
+      default:
+        throw new Error(`unknown argument: ${args[i]}`);
+    }
+  }
+  return options;
+}
+
+let options;
+try {
+  options = parseArgs(process.argv.slice(2));
+} catch (error) {
+  console.error(`install-skills: ${error.message}`);
+  process.exit(2);
+}
+const { explicit, listOnly, force, help } = options;
+if (help) {
+  console.log("Usage: claude-agy-mcp-install-skills [--dir <path>] [--list] [--force]");
+  console.log("--list previews without writing; --force replaces a symlinked installation.");
+  process.exit(0);
+}
 
 const skills = await bundledSkills();
 if (listOnly) {
