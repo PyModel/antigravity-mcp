@@ -4,6 +4,10 @@ Thanks for helping out. Small PRs land fastest.
 
 ## Setup
 
+Use Node.js 24 for development, matching CI. Package tests separately cover
+Node.js 24 with strict engine checks and legacy Node.js 18 stdio behavior; see
+the [runtime prerequisites](README.md#prerequisites) for the installation limits.
+
 ```bash
 npm ci
 npm test          # vitest
