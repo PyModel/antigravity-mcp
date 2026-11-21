@@ -123,7 +123,7 @@ These fields are host-specific; a server startup timeout is a separate setting. 
 execution allowance for larger bridge limits, queued work, or sequential fan-out legs. The extra
 minute leaves room for the default grace and response delivery; it is not a completion guarantee.
 For registration examples and the checked client documentation, read the
-[client guide](https://github.com/PyModel/claude-agy-mcp/blob/main/docs/multi-client-support.md#timeout-settings).
+[client guide](https://github.com/PyModel/antigravity-mcp/blob/main/docs/multi-client-support.md#timeout-settings).
 
 A host timeout may discard the bridge's partial result and session ID. A bridge timeout reports
 `MAXIMUM RUNTIME EXCEEDED` and preserves bounded partial output and the session ID when available.

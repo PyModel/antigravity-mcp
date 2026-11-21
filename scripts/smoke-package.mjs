@@ -51,8 +51,9 @@ try {
     "assets/banner.svg",
     "assets/benchmarks.svg",
     "scripts/install-skills.mjs",
-    "skills/agy-delegate/SKILL.md",
-    "skills/agy-delegate/scripts/relay.mjs",
+    "skills/antigravity-mcp/SKILL.md",
+    "skills/antigravity-mcp/scripts/relay.mjs",
+    "skills/antigravity-mcp-routing/SKILL.md",
   ]) {
     assert(
       packed.files.some((entry) => entry.path === file),
@@ -62,6 +63,12 @@ try {
   assert(
     !packed.files.some((entry) => entry.path.startsWith("test/") || entry.path.startsWith("src/")),
   );
+  for (const previous of ["agy-delegate", "agy-delegation"]) {
+    assert(
+      !packed.files.some((entry) => entry.path.startsWith(`skills/${previous}/`)),
+      `tarball still bundles the legacy skill ${previous}`,
+    );
+  }
   const project = path.join(temp, "consumer");
   mkdirSync(project);
   writeFileSync(
@@ -159,8 +166,11 @@ try {
     ["--dir", skillsDir],
     project,
   );
-  assert(existsSync(path.join(skillsDir, "agy-delegate", "SKILL.md")));
-  assert(existsSync(path.join(skillsDir, "agy-delegate", "scripts", "relay.mjs")));
+  assert(existsSync(path.join(skillsDir, "antigravity-mcp", "SKILL.md")));
+  assert(existsSync(path.join(skillsDir, "antigravity-mcp", "scripts", "relay.mjs")));
+  assert(existsSync(path.join(skillsDir, "antigravity-mcp-routing", "SKILL.md")));
+  for (const previous of ["agy-delegate", "agy-delegation"])
+    assert.equal(existsSync(path.join(skillsDir, previous)), false);
   const legacyHelp = run(
     path.join(project, "node_modules", ".bin", "claude-agy-mcp-install-skills"),
     ["--help"],

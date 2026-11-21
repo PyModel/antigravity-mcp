@@ -94,6 +94,29 @@ async function isSymlink(dest) {
   }
 }
 
+/** Inspect legacy entries themselves; never traverse or replace a user's old copy. */
+async function reportLegacySkills(parent) {
+  const renamed = [];
+  for (const [previous, current] of [
+    ["agy-delegate", "antigravity-mcp"],
+    ["agy-delegation", "antigravity-mcp-routing"],
+  ]) {
+    try {
+      const entry = await lstat(path.join(parent, previous));
+      if (entry.isDirectory() || entry.isSymbolicLink()) renamed.push(`${previous} → ${current}`);
+    } catch {
+      // A missing or unreadable legacy entry must not prevent a new installation.
+    }
+  }
+  if (renamed.length) {
+    console.log(`Legacy skills in ${parent}: ${renamed.join("; ")}.`);
+    console.log(
+      "Existing copies are left untouched, including with --force. Migrate custom changes, " +
+        "then remove old copies yourself to avoid loading duplicate skills.",
+    );
+  }
+}
+
 async function install(skill, parent, force) {
   const dest = path.join(parent, skill.name);
   await mkdir(parent, { recursive: true });
@@ -213,6 +236,8 @@ const targets = explicit
   : (await Promise.all(TARGETS.map(async (t) => ((await isDir(t.dir)) ? t : null)))).filter(
       Boolean,
     );
+
+for (const target of targets) await reportLegacySkills(target.dir);
 
 if (listOnly) {
   console.log(

@@ -48,6 +48,7 @@ The bridge does not automatically replay it. Preserve partial output and the ses
 ID, reconcile the observed outcome, then continue deliberately. Do not turn a
 provider's retryable diagnostic into permission to repeat a whole agent turn.
 
-The bundled `agy-delegation` and `agy-delegate` skills describe the full workflow.
+The bundled `antigravity-mcp` workflow and `antigravity-mcp-routing` companion
+skills describe delegation in detail.
 Hosts without MCP can use the bundled CLI relay; its read-only mode is advisory
 and does not inherit the MCP bridge's macOS confinement.

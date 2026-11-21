@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * delegate-skills · agy-delegate · relay.mjs
+ * delegate-skills · antigravity-mcp · relay.mjs
  *
  * Dispatch a self-contained brief to the Google Antigravity CLI (`agy --print`),
  * capture the run, and write a structured result the orchestrating agent can
