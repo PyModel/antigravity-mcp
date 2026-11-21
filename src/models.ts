@@ -38,7 +38,7 @@ export interface ModelInfo {
 
 const VERSION_TOKEN = /^\d+(?:\.\d+)*$/;
 
-/** Splits "Gemini 3.8 Flash (High)" into its family, version and effort. */
+/** Splits "Gemini 4 Neon (High)" into its family, version and effort. */
 export function describeModel(id: string, name: string): ModelInfo {
   const paren = /\(([^)]*)\)\s*$/.exec(name);
   const suffix = paren?.[1]?.trim().toLowerCase();

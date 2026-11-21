@@ -45,8 +45,8 @@ const commonShape = {
   model: flagValue()
     .optional()
     .describe(
-      'Override the model. Accepts a display name ("Gemini 3.8 Flash (High)"), an id ' +
-        '("gemini-3.8-flash-high"), or a family selector ("gemini-pro@latest-high"). ' +
+      'Override the model. Accepts a display name ("Gemini 4 Neon (High)"), an id ' +
+        '("gemini-4-neon-high"), or a family selector ("gemini-neon@latest-high"). ' +
         "Normally omit — the tool routes automatically.",
     ),
   effort: z
@@ -273,7 +273,7 @@ export const TOOLS: ToolDef[] = [
       "Read-only by default; pass `write: true` to rework a delegation that edited files.",
     schema: z.object({
       session_id: flagValue().describe(
-        "The session id returned by a previous claude-agy-mcp call.",
+        "The session id returned by a previous Antigravity MCP call.",
       ),
       question: text().describe("The follow-up question."),
       write: z
@@ -371,8 +371,8 @@ export const TOOLS: ToolDef[] = [
         .min(1)
         .optional()
         .describe(
-          'The model the user chose: a display name ("Gemini 3.8 Flash (High)"), an id ' +
-            '("gemini-3.8-flash-high"), or a family selector ("gemini-flash@latest-high"). ' +
+          'The model the user chose: a display name ("Gemini 4 Neon (High)"), an id ' +
+            '("gemini-4-neon-high"), or a family selector ("gemini-neon@latest-high"). ' +
             "Omit to accept the default (AGY_DEFAULT_MODEL, Gemini Flash High out of the box).",
         ),
       effort: z

@@ -1,21 +1,22 @@
 #!/usr/bin/env node
 /**
- * Installs the skills bundled with claude-agy-mcp into an agent's skills directory.
+ * Installs the skills bundled with Antigravity MCP into an agent's skills directory.
  *
  * The MCP server gives an agent the *tools*; a skill tells it when and how to
  * use them. Shipping both in one package means installing the server is enough,
  * instead of asking every user to find and vendor the skill separately.
  *
  * The package exposes this as its own bin, so it is a package selection rather
- * than a subcommand. `npx @pymodel/claude-agy-mcp-install-skills` looks like a
- * package name to npx and 404s; `npx @pymodel/claude-agy-mcp install-skills`
+ * than a subcommand. `npx @pymodel/antigravity-mcp-install-skills` looks like a
+ * package name to npx and 404s; `npx @pymodel/antigravity-mcp install-skills`
  * starts the stdio server with a stray argument and hangs.
  *
- *   npx --package @pymodel/claude-agy-mcp claude-agy-mcp-install-skills
- *   npx --package @pymodel/claude-agy-mcp claude-agy-mcp-install-skills --list
- *   npx --package @pymodel/claude-agy-mcp claude-agy-mcp-install-skills --dir DIR
+ *   npx --package @pymodel/antigravity-mcp antigravity-mcp-install-skills
+ *   npx --package @pymodel/antigravity-mcp antigravity-mcp-install-skills --list
+ *   npx --package @pymodel/antigravity-mcp antigravity-mcp-install-skills --dir DIR
  *
- * Already installed, globally or in a project: `claude-agy-mcp-install-skills`.
+ * Already installed, globally or in a project: `antigravity-mcp-install-skills`.
+ * The legacy claude-agy-mcp-install-skills executable remains an alias.
  */
 import {
   cp,
@@ -44,7 +45,15 @@ const SOURCE = path.join(HERE, "..", "skills");
  */
 const TARGETS = [
   { name: "Claude Code", dir: path.join(homedir(), ".claude", "skills") },
-  { name: "agents hub", dir: path.join(homedir(), ".agents", "skills") },
+  { name: "Codex / shared agents", dir: path.join(homedir(), ".agents", "skills") },
+  {
+    name: "OpenCode",
+    dir: path.join(
+      process.env.XDG_CONFIG_HOME || path.join(homedir(), ".config"),
+      "opencode",
+      "skills",
+    ),
+  },
   { name: "Pi", dir: path.join(homedir(), ".pi", "agent", "skills") },
   { name: "zcode", dir: path.join(homedir(), ".zcode", "skills") },
 ];
@@ -188,14 +197,14 @@ try {
 }
 const { explicit, listOnly, force, help } = options;
 if (help) {
-  console.log("Usage: claude-agy-mcp-install-skills [--dir <path>] [--list] [--force]");
+  console.log("Usage: antigravity-mcp-install-skills [--dir <path>] [--list] [--force]");
   console.log("--list previews without writing; --force replaces a symlinked installation.");
   process.exit(0);
 }
 
 const skills = await bundledSkills();
 if (listOnly) {
-  console.log("Skills bundled with claude-agy-mcp:\n");
+  console.log("Skills bundled with Antigravity MCP:\n");
   for (const s of skills) console.log(`  ${s.name}\n    ${s.summary}\n`);
 }
 

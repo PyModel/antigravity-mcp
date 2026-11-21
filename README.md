@@ -1,44 +1,33 @@
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/PyModel/claude-agy-mcp/main/assets/banner.svg" alt="claude-agy-mcp — Claude Code delegates heavy tasks to the Antigravity CLI" width="100%">
+<img src="assets/banner.svg" alt="Antigravity MCP — Gemini 4 Neon delegation for Pi, OpenCode, Codex, and Claude Code" width="100%">
 
 <p>
-  <a href="https://www.npmjs.com/package/@pymodel/claude-agy-mcp"><img alt="npm downloads" src="https://img.shields.io/npm/dm/@pymodel/claude-agy-mcp?style=flat&logo=npm&logoColor=white&label=downloads&labelColor=1b1f27&color=4E86F5"></a>
-  <img alt="visitors" src="https://komarev.com/ghpvc/?username=pymodel-claude-agy-mcp&label=visitors&color=blueviolet&style=flat">
-</p>
-
-<p>
-  <a href="https://claude.com/claude-code"><img alt="Claude Code" src="https://img.shields.io/badge/Claude_Code-Orchestrator-e0a83c?style=flat&logo=anthropic&logoColor=white&labelColor=1b1f27"></a>
-  <a href="https://gemini.google.com"><img alt="Gemini 4" src="https://img.shields.io/badge/Gemini_4-Models-4E86F5?style=flat&logo=googlegemini&logoColor=white&labelColor=1b1f27"></a>
-  <a href="https://modelcontextprotocol.io"><img alt="MCP" src="https://img.shields.io/badge/MCP-Protocol-D96570?style=flat&logo=modelcontextprotocol&logoColor=white&labelColor=1b1f27"></a>
+  <a href="https://modelcontextprotocol.io"><img alt="MCP stdio" src="https://img.shields.io/badge/MCP-stdio-85E0C3?style=flat&labelColor=101923"></a>
+  <a href="#models-and-plan-availability"><img alt="Gemini 4 Neon" src="https://img.shields.io/badge/Gemini_4-Neon-85E0C3?style=flat&labelColor=101923"></a>
+  <a href="https://github.com/PyModel/claude-agy-mcp/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/PyModel/claude-agy-mcp/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-85E0C3?style=flat&labelColor=101923"></a>
 </p>
 
 <p>
   <a href="#install"><b>Install</b></a> ·
+  <a href="#clients"><b>Clients</b></a> ·
   <a href="#models-and-plan-availability"><b>Models & Plans</b></a> ·
   <a href="#pricing-and-cost"><b>Pricing</b></a> ·
-  <a href="#complementary-mcp-tools"><b>Companion Tools</b></a> ·
   <a href="#tools"><b>Tools</b></a> ·
-  <a href="#timeouts-and-cancellation"><b>Timeouts</b></a> ·
+  <a href="#migration-from-claude-agy-mcp"><b>Migration</b></a> ·
   <a href="#configuration"><b>Configuration</b></a>
 </p>
 
-# ⚡ Install
-
-```bash
-npm i @pymodel/claude-agy-mcp
-```
-
-```bash
-claude mcp add-json -s user claude-agy-mcp \
-  '{"type":"stdio","command":"npx","args":["-y","@pymodel/claude-agy-mcp"],"timeout":3600000}'
-```
-
-**Delegate research, code analysis, and implementation to the Antigravity CLI (`agy`) from your MCP client.** Select Gemini 4 Neon, Carbon, Argon, Hydrogen, or another model actually available to your account.
-
-The bridge resolves account-specific model IDs, preserves conversation sessions, reports usage and partial failures, and returns bounded results. Existing automatic Flash routes remain available; choose a Gemini 4 variant explicitly with `set_model` or a per-call `model`.
-
 </div>
+
+# Antigravity MCP
+
+**Connect your coding agent to Antigravity models for research, code review, and implementation.** Use Pi, OpenCode, Codex, Claude Code, or another client that can launch a local MCP stdio server. Your host keeps its own model and workflow; delegated work runs through the authenticated Antigravity CLI (`agy`).
+
+Choose Gemini 4 Neon or another model in your account's live inventory. The bridge resolves model IDs, preserves conversation sessions, reports usage and partial failures, and returns bounded results. This is an independently maintained integration with Antigravity.
+
+**Package transition:** this source is now `@pymodel/antigravity-mcp`. The new npm name was not published as of November 21, 2026; use the [source build](#build) until release. Existing users should read the [migration notes](#migration-from-claude-agy-mcp). The GitHub repository remains `PyModel/claude-agy-mcp`.
 
 ## Models and plan availability
 
@@ -108,137 +97,148 @@ Among the four Gemini 4 families, Hydrogen has the lowest listed standard token 
 
 See the [research and implementation decisions](docs/research/gemini4-routing-2026-11-21.md) and [audit report](docs/audits/2026-11-21/report.md) for sources, confirmed defects, verification, and the remaining live evaluation.
 
-## Existing automatic route and historical benchmarks
+## How delegation works
 
 <div align="center">
-  <img src="https://raw.githubusercontent.com/PyModel/claude-agy-mcp/main/assets/benchmarks.svg" alt="Gemini 3.8 Flash Benchmarks" width="100%">
+  <img src="assets/benchmarks.svg" alt="Pi, OpenCode, Codex, or Claude Code connects through Antigravity MCP to an available AGY model such as Gemini 4 Neon" width="100%">
 </div>
 
-The automatic route still begins with the newest listed Flash High variant. Changing that default requires a repository-specific evaluation of quality, latency, and cost per accepted task. Gemini 4 support does not silently change an existing saved choice.
+1. Your coding agent calls a tool such as `analyze_files`, `deep_search`, or `delegate`, with a bounded brief and explicit workspace.
+2. Antigravity MCP resolves the selected model against `agy models` and runs the task in an AGY conversation.
+3. The response returns findings, reported usage, session metadata, and any incomplete-result diagnostics.
+4. `follow_up` continues that conversation for corrections or additional questions.
 
-> **Historical comparison:** the figures below were recorded for Flash 3.8 versus 3.7 from [Google’s September 2, 2026 launch table](https://blog.google/innovation-and-ai/models-and-research/gemini-models/3-8-flash-and-3-8-flash-cyber). They are not a Gemini 4 benchmark or a measurement of this bridge. Check current rates in [Pricing and cost](#pricing-and-cost).
+Large source material can stay in the delegated conversation, while the host receives the requested findings. Response size is capped by `AGY_MAX_OUTPUT_CHARS`; delegating does not guarantee lower total token use or cost.
 
-### Benchmark Highlights
-
-| Benchmark / Capability    | Gemini 3.8 Flash (High) | Prior Generation (3.7 Flash) | Advantage                                                                      |
-| ------------------------- | ----------------------- | ---------------------------- | ------------------------------------------------------------------------------ |
-| **DeepSWE v1.1**          | **73.7%**               | 65.3%                        | **+8.4 pts** in long-horizon software engineering; within 0.3 of Claude Opus 5 |
-| **Terminal-Bench 2.1**    | **89.4%**               | 85.8%                        | **+3.6 pts** in agentic CLI execution; ahead of Opus 5 (89.1%) and GPT-5.6 Sol |
-| **OSWorld-2.0**           | **59.0%**               | 50.6%                        | **+8.4 pts** in agentic computer use                                           |
-| **HLE-Verified**          | **54.9%**               | 53.6%                        | Multi-step expert reasoning, ahead of Opus 5 (54.4%)                           |
-| **Vals Finance Agent v2** | **61.4%**               | 59.0%                        | Leads Opus 5 (58.6%) and GPT-5.6 Sol (53.8%) on quantitative agent work        |
-
-### The Token & Context Multiplier
-
-When Claude Code directly analyzes a 4,000-line database dump or greps 20 files across git history, those thousands of lines stay permanently in Claude's prompt context, inflating cost and pushing you toward compaction.
-
-With `claude-agy-mcp`:
-
-1. Claude calls `analyze_files` or `deep_search`.
-2. The selected model processes the source material in a separate `agy` conversation.
-3. Only the exact code-level findings and line citations return into Claude's prompt.
-4. Subsequent questions reuse the same agy session with `follow_up` without re-sending any files.
-
----
-
-## Complementary MCP tools
-
-`claude-agy-mcp` is designed to anchor a modern AI engineer's MCP toolkit alongside complementary specialized servers:
-
-| MCP Server           | Primary Superpower                    | When Claude Uses It                                                                                                                                            |
-| -------------------- | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **`claude-agy-mcp`** | **Heavy Compute & Coding Delegation** | Analyzing files >200 lines, repo archaeology (`git log/diff/blame`), adversarial code reviews, and execution through the selected AGY model.                   |
-| **`context7`**       | **Up-to-date Official Documentation** | Fetching latest version-accurate API signatures and documentation for libraries (Next.js, React, Tailwind, Prisma, Vite, etc.) to eliminate hallucinated APIs. |
-| **`firecrawl`**      | **Clean Web Scraping & Crawling**     | Converting dynamic web pages, documentation sites, and GitHub repos into clean, LLM-ready markdown or structured JSON.                                         |
-| **`tavily`**         | **Fast Live Search & Grounding**      | Low-latency web search, current news, error message lookups, and technical research.                                                                           |
-
-### Recommended MCP Configuration (`.agents/mcp_config.json` or Claude Code)
+To use **Gemini 4 Neon Medium**, first check `agy_status`, then call `set_model` with the listed ID:
 
 ```json
-{
-  "mcpServers": {
-    "claude-agy-mcp": {
-      "command": "npx",
-      "args": ["-y", "@pymodel/claude-agy-mcp"],
-      "timeout": 3600000
-    },
-    "context7": {
-      "command": "npx",
-      "args": ["-y", "@upstash/context7-mcp@latest"]
-    },
-    "firecrawl": {
-      "command": "npx",
-      "args": ["-y", "firecrawl-mcp"]
-    },
-    "tavily": {
-      "command": "npx",
-      "args": ["-y", "tavily-mcp"]
-    }
-  }
-}
+{ "model": "gemini-4-neon-medium" }
 ```
 
----
+This saves the user's choice without making a delegated model call. Existing automatic routes still begin with a listed Flash variant; selecting Neon explicitly changes your preference. The banner illustrates a supported selection, not a benchmark result or an entitlement guarantee.
 
-## Why this over claude-to-agy?
+## Clients
 
-|                 | claude-to-agy               | **claude-agy-mcp**                                                                                 |
-| --------------- | --------------------------- | -------------------------------------------------------------------------------------------------- |
-| Tool surface    | 1 generic `delegate_to_agy` | 9 tools for delegation, model selection, and status                                                |
-| Model selection | none (agy default only)     | per-tool family selectors that follow new generations, with account validation and quota cooldowns |
-| Multi-turn      | stateless                   | session continuity — `follow_up` resumes agy conversations without resending context               |
-| Output safety   | unbounded                   | configurable truncation cap protects Claude's context                                              |
-| Sandbox         | no                          | read-only tools blocked from writing into the workspace on macOS, optional `--sandbox`             |
-| Honest results  | exit code only              | decides on agy's JSON envelope — reports auto-denied tool actions instead of hiding them           |
-| Install         | uvx (Python)                | npx (Node) — zero install                                                                          |
+All four clients below can launch this local MCP stdio server. Their configuration files and timeout units differ; use the linked setup for your installed host version.
+
+| Coding agent       | Setup                                                                   | Tool timeout example                         |
+| ------------------ | ----------------------------------------------------------------------- | -------------------------------------------- |
+| Pi 0.99.0 or newer | [Built-in MCP extension](docs/multi-client-support.md#pi)               | `timeout: 3660` seconds                      |
+| OpenCode           | [Native V2 and V1 compatibility](docs/multi-client-support.md#opencode) | V2 `timeout.execution: 3660000` milliseconds |
+| Codex CLI / IDE    | [MCP configuration](docs/multi-client-support.md#codex-cli-and-ide)     | `tool_timeout_sec = 3660` seconds            |
+| Claude Code        | [MCP configuration](docs/multi-client-support.md#claude-code)           | `timeout: 3660000` milliseconds              |
+
+Other clients need local MCP stdio support. Hosts without it can use the bundled CLI relay, which has a separate result and read-only contract. Tool names may acquire a host-specific prefix; discover the exposed tools instead of assuming a particular client's naming convention.
 
 ## Requirements
 
+- macOS or Linux, with a coding-agent host that supports local MCP stdio.
 - Node.js 24 is recommended for development and deployments. Legacy Node.js 18 is smoke-tested for stdio with npm's default engine checks. The checked-in dependency graph includes an HTTP adapter requiring Node.js 20+, so Node.js 18 `engine-strict` installation of that graph is unsupported; fresh dependency resolution can differ.
-- [Antigravity CLI](https://antigravity.google/docs/install?tab=cli) (`agy`) installed and authenticated
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
+- [Antigravity CLI](https://antigravity.google/docs/install?tab=cli) (`agy`) installed and authenticated for the operating-system user running the server.
+
+Your host's subscription or API key does not authenticate AGY. Model access and billing follow AGY's own account and provider settings.
 
 ## Install
 
+Build the source revision containing this rename, then register that build with your chosen host. Keep the checkout and its installed dependencies available while the host uses it.
+
+### Build
+
+From the repository checkout:
+
 ```bash
-# 1. Register the MCP server (user scope = all projects).
-#    add-json bakes in a generous client-side timeout so long analyze_files /
-#    delegate calls don't trip Claude Code's tool-call deadline (see Timeouts).
-claude mcp add-json -s user claude-agy-mcp \
-  '{"type":"stdio","command":"npx","args":["-y","@pymodel/claude-agy-mcp"],"timeout":3600000}'
+npm ci
+npm run build
+npm run check:release
 
-# 2. Install the bundled skills into every agent found on this machine.
-#    The server gives an agent the tools; the skills tell it when to use them.
-npx --package @pymodel/claude-agy-mcp claude-agy-mcp-install-skills
-#    --list to preview, --dir <path> to install somewhere explicit,
-#    --force to replace a skill you have symlinked to your own checkout.
+# Confirm the CLI is available to the same user.
+agy --version
+agy models
+```
 
-# 3. Optional: add delegation rules to your project (or ~/.claude/CLAUDE.md).
-curl -o CLAUDE.md https://raw.githubusercontent.com/PyModel/claude-agy-mcp/main/CLAUDE.md
+From that same directory, run the registration command for **one** host:
+
+| Host        | Register the local build                                                                 |
+| ----------- | ---------------------------------------------------------------------------------------- |
+| Pi          | `pi mcp add antigravity -- node "$PWD/dist/index.js"`                                    |
+| OpenCode    | `opencode mcp add antigravity -- node "$PWD/dist/index.js"`                              |
+| Codex       | `codex mcp add antigravity -- node "$PWD/dist/index.js"`                                 |
+| Claude Code | `claude mcp add --transport stdio --scope user antigravity -- node "$PWD/dist/index.js"` |
+
+Configure the host's longer tool timeout before starting a long delegation. The [client guide](docs/multi-client-support.md) includes complete file-based examples, scope choices, absolute executable paths for desktop environments, and connection checks. The examples use the registration name `antigravity`; an existing registration can keep its name when you replace its launch command.
+
+### After the renamed package is published
+
+The canonical package will be `@pymodel/antigravity-mcp`, with the executable `antigravity-mcp`. **The commands in this subsection require that release; they do not work before publication.**
+
+Use this command as the host's stdio process:
+
+```bash
+npx -y --package @pymodel/antigravity-mcp antigravity-mcp
+```
+
+See the [per-client package registration commands](docs/multi-client-support.md#after-the-renamed-package-is-published). Starting the executable directly in a terminal launches a protocol server; it is not an interactive chat command.
+
+After publication, the separate skill installer can be run with:
+
+```bash
+npx --package @pymodel/antigravity-mcp antigravity-mcp-install-skills
 ```
 
 ### Bundled skills
 
-The npm package ships the skills. The installer command above copies them into detected
-agent directories or an explicit `--dir`; installing the server alone does not activate them.
+The package ships two reusable skills. Installing or registering the server exposes its tools; run the skill installer separately to activate the instructions in your host.
 
-| Skill            | What it does                                                                                                                                                                                                                       |
-| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `agy-delegation` | Routing rules: which tool to reach for, and when delegating beats doing the work in-context.                                                                                                                                       |
-| `agy-delegate`   | The full delegate-and-review workflow — writing a brief agy can execute blind, dispatching it, reviewing the diff against the brief, and landing it yourself. Includes a CLI-relay fallback for agents that cannot call MCP tools. |
+| Skill            | What it does                                                                                                              |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `agy-delegation` | Routes bounded research, analysis, reviews, and implementation to the appropriate tool.                                   |
+| `agy-delegate`   | Writes a task brief, dispatches it, reviews the result, and verifies changes. Includes a CLI relay for hosts without MCP. |
 
-The raw relay has its own result contract and only watches read-only roots on every OS.
-It does not inherit the MCP bridge's macOS confinement. Unknown coverage and detected changes
-are reported explicitly. Use a separate report directory per job; reuse clears old captures and is locked while a run is active.
+From the checkout, preview discovery and choose an explicit destination:
 
-> The `"timeout": 3600000` (60 min, milliseconds) is the **client-side** tool-call
-> deadline, matched to the bridge's default `AGY_MAX_RUNTIME` ceiling. Without it,
-> a cold-start `analyze_files` (~40–50s) or a long `delegate` hits Claude Code's
-> default and returns `timed out waiting for response` while the agy run is still
-> going — and raising the agy-side ceiling alone will not help, because the client
-> aborts first. If your client doesn't honor a per-server `timeout`, set the global
-> env var `MCP_TOOL_TIMEOUT=3600000` instead.
-> Details in [Timeouts and cancellation](#timeouts-and-cancellation).
+```bash
+node scripts/install-skills.mjs --list
+node scripts/install-skills.mjs --dir /absolute/path/to/your/agent/skills
+```
+
+Without `--dir`, the installer selects existing agent skill directories; `--list` previews without writing. Use `--force` only when deliberately replacing a symlinked skill. The [client guide](docs/multi-client-support.md#optional-bundled-skills) documents Codex and OpenCode locations and overlapping discovery paths.
+
+[AGENTS.md](AGENTS.md) contains shared delegation guidance for coding agents; [CLAUDE.md](CLAUDE.md) points Claude Code to it. Merge relevant guidance into your project's existing instruction files without overwriting unrelated rules.
+
+The raw relay has its own result contract and only watches read-only roots on every OS. It does not inherit the MCP bridge's macOS confinement. Unknown coverage and detected changes are reported explicitly. Use a separate report directory per job; reuse clears old captures and is locked while a run is active.
+
+## Migration from Claude AGY MCP
+
+| Identity                | Previous                           | New                                 |
+| ----------------------- | ---------------------------------- | ----------------------------------- |
+| Product                 | Claude AGY MCP                     | Antigravity MCP                     |
+| npm package             | `@pymodel/claude-agy-mcp`          | `@pymodel/antigravity-mcp`          |
+| Server executable       | `claude-agy-mcp`                   | `antigravity-mcp`                   |
+| Skill installer         | `claude-agy-mcp-install-skills`    | `antigravity-mcp-install-skills`    |
+| MCP registry identifier | `io.github.PyModel/claude-agy-mcp` | `io.github.PyModel/antigravity-mcp` |
+
+The new package retains both old executable names as aliases. Those aliases identify executables inside the new package: an existing `npx @pymodel/claude-agy-mcp` command still requests the **old npm package**. Update the configured package or point the host at the source build. The new package and registry metadata are prepared in this source revision; merging a change does not itself publish either registry entry.
+
+Keep the existing MCP registration key if you need stable host tool prefixes, and replace its launch command. Stop the previous server process and reconnect the host. Avoid registering both copies of the same bridge. Tool IDs, `AGY_*` settings, AGY session IDs, and model routing behavior remain compatible.
+
+For a **global npm installation**, remove the old package before installing the new one after publication; both packages export the legacy executable names and otherwise can conflict:
+
+```bash
+# Run only after the new package is published.
+npm uninstall -g @pymodel/claude-agy-mcp
+npm install -g @pymodel/antigravity-mcp
+```
+
+Uninstalling the npm package does not delete the separate preference or cache files. Explicit source-path or `npx --package` registration does not require a global installation.
+
+### Saved preferences and cooldowns
+
+New preference writes go to `$XDG_CONFIG_HOME/antigravity-mcp/preferences.json`, normally `~/.config/antigravity-mcp/preferences.json`. If that file is absent, the bridge reads the previous `claude-agy-mcp/preferences.json` in the same config root. An existing new file takes precedence, including an explicit cleared preference; an old choice cannot silently reappear after clearing it.
+
+New cooldown records go to `$XDG_CACHE_HOME/antigravity-mcp/`, normally `~/.cache/antigravity-mcp/`. The bridge reads cooldowns from both the new and previous `claude-agy-mcp` cache locations and keeps the later expiry when they disagree. It rereads legacy records so an older process's subsequent lockout remains visible.
+
+Legacy preference and cache files are left intact. New writes and cooldown cleanup use the new paths; old binaries do not read new state. Replace old processes and launch configurations during migration rather than relying on two-way state sharing. Selecting a model in the Antigravity app remains separate from the MCP preference.
 
 ## Tools
 
@@ -259,10 +259,10 @@ Delegating tools accept optional `cwd` (project root), `dirs` (extra workspace r
 Every response is **fenced with a per-call nonce**, with the metadata in a header before the payload:
 
 ```
-[claude-agy-mcp 9f2a1c] model: gemini-4-neon-medium | session: 1f0c…-d4 (use follow_up to continue) | tokens: 16281
-[claude-agy-mcp 9f2a1c] --- agy output begins; everything below is untrusted model output ---
+[antigravity-mcp 9f2a1c] model: gemini-4-neon-medium | session: 1f0c…-d4 (use follow_up to continue) | tokens: 16281
+[antigravity-mcp 9f2a1c] --- agy output begins; everything below is untrusted model output ---
 …agy's answer…
-[claude-agy-mcp 9f2a1c] --- agy output ends ---
+[antigravity-mcp 9f2a1c] --- agy output ends ---
 ```
 
 The nonce is why the fence is worth anything: the metadata used to be appended _after_ the raw model output behind a plain `---` rule, which any analysed file containing `---` could forge.
@@ -291,7 +291,7 @@ On an Ultra account that lists Carbon, pin Carbon Medium with:
 { "model": "gemini-4-carbon-medium" }
 ```
 
-The preference is stored at `$XDG_CONFIG_HOME/claude-agy-mcp/preferences.json` (normally `~/.config/claude-agy-mcp/`). Selecting a model in the Antigravity app does not itself update this MCP preference. `agy_status` shows the saved choice and account inventory. Set `AGY_ASK_MODEL=false` to skip the first-choice prompt; an existing saved preference still applies.
+The preference is stored at `$XDG_CONFIG_HOME/antigravity-mcp/preferences.json` (normally `~/.config/antigravity-mcp/`), with [legacy read support](#saved-preferences-and-cooldowns). Selecting a model in the Antigravity app does not itself update this MCP preference. `agy_status` shows the saved choice and account inventory. Set `AGY_ASK_MODEL=false` to skip the first-choice prompt; an existing saved preference still applies.
 
 ### Effort and tiers
 
@@ -319,15 +319,15 @@ Automatic routes may choose another available, non-cooling model on the next ind
 
 **The bridge does not kill a run for being slow.** Elapsed time cannot distinguish a healthy long model call from a wedged process, and a wrong "stuck" verdict interrupts an agent mid-edit — leaving half-written files behind. So a run is killed only when something authoritative says so:
 
-1. **the caller cancels** (e.g. pressing Esc in Claude Code), **the client disconnects**, or **the bridge is stopped** — every agy run it started dies with it instead of being orphaned,
+1. **the caller cancels** (through the host's cancellation control), **the client disconnects**, or **the bridge is stopped** — every agy run it started dies with it instead of being orphaned,
 2. **a bounded raw-output limit is exceeded**, which reports an explicit failure, or
 3. **the resource ceiling expires** — `AGY_MAX_RUNTIME`, default 3600s.
 
 The ceiling is a resource cap. Raw capture is also bounded: 64 MiB of stdout per cold call or resident turn, 64 MiB of run log, and 1 MiB of cold stderr. Exceeding a bound fails explicitly and preserves a clipped recovery preview; it never silently turns a truncated JSON result into success. When it fires, the result is explicitly incomplete and preserves available bounded output and the session ID when the CLI reports one. Existing file or remote changes are not rolled back; inspect them before a deliberate `follow_up`. `AGY_TIMEOUT` overrides the ceiling for every tool; `AGY_TIMEOUT_<TOOL_NAME>` overrides it for one (e.g. `AGY_TIMEOUT_DEEP_SEARCH=900`) and wins over the global. The full set is `AGY_TIMEOUT_ANALYZE_FILES`, `AGY_TIMEOUT_DEEP_SEARCH`, `AGY_TIMEOUT_WEB_LOOKUP`, `AGY_TIMEOUT_ADVERSARIAL_REVIEW`, `AGY_TIMEOUT_FOLLOW_UP`, `AGY_TIMEOUT_DELEGATE` and `AGY_TIMEOUT_DELEGATE_MANY`; any other `AGY_TIMEOUT_<NAME>` is a startup error, so a misspelt limit cannot silently not apply. Every timeout is at most 604800s (7 days), because Node fires a longer timer immediately. The kill path escalates SIGTERM → SIGKILL across the whole process group, and fires even if agy's helper processes hold the output pipes open.
 
-**Two timeout layers — and the client one usually bites first.** The ceiling above is the _agy-side_ budget. Your MCP client (Claude Code) has its own, separate _tool-call_ timeout, and if it is shorter, the client gives up first — you'll see `Error: timed out waiting for response`, while the bridge's own ceiling reads `MAXIMUM RUNTIME EXCEEDED` instead. Raising `AGY_MAX_RUNTIME` alone therefore changes nothing: the client still aborts on its own schedule. A persisted session may allow recovery with `follow_up`; inspect partial state before continuing. The client setting to change is to make the client wait at least as long as the ceiling. The [Install](#install) command sets a per-server `timeout` of 3600000ms (scoped to this server only). If you registered the server without it, re-run the `add-json` command from Install, or set the global env var `MCP_TOOL_TIMEOUT=3600000`. Rule of thumb: **client `timeout` ≥ `AGY_MAX_RUNTIME`**.
+**The host has a separate deadline.** A host can cancel its tool call before the bridge reaches its own runtime ceiling. Configure the host limit with room for cleanup and an incomplete-result report: the [client guide](docs/multi-client-support.md#timeout-settings) uses 3660 seconds, or 3660000 milliseconds, for the default 3600-second AGY ceiling and 15-second kill grace. Pi and Codex use seconds; OpenCode V2 and Claude Code use milliseconds in their documented fields. These settings are host-specific, not interchangeable MCP options. Queued or multi-delegation calls may need additional time; raising only `AGY_MAX_RUNTIME` does not change the host's limit.
 
-**Expected latency.** Most of the perceived "slowness" is cold start: each call spawns the agy CLI and warms the model. Measured on agy 1.2.0, a trivial prompt costs **2–6s**, a run whose tool actions get denied around **16s**, and one constrained by `--json-schema` up to **56s** (the schema roughly triples thinking tokens). Real `analyze_files` work over several large files is much slower again, and native provider retries can add further latency. `follow_up` is the exception: it reuses a **resident agy process** (see `AGY_WARM_SESSIONS`) and skips the cold start entirely — unless the call changes its model, effort, roots, restrictions, or write permission. Such calls invalidate and reap the old resident before continuing cold. A resident turn is bounded by the same runtime ceiling and cancellation as a cold run. Size the client timeout for the slow cases, not the fast ones.
+**Cold and resident calls have different startup costs.** A cold call starts the AGY CLI and a model conversation. `follow_up` can reuse a resident process when `AGY_WARM_SESSIONS` is enabled. Changing the model, effort, roots, restrictions, or write permission invalidates that resident and continues cold. Both paths use the runtime ceiling and cancellation controls. Inspect partial state before deliberately continuing an interrupted session.
 
 ## Configuration
 
@@ -352,7 +352,7 @@ All optional, via environment variables:
 | `AGY_BUDGET_TOKENS`         | unset                      | Refuse new dispatches once reported spend reaches this threshold; includes reported failed turns. An in-flight turn can exceed it; this is not a billing cap                           |
 | `AGY_ALLOWED_ROOTS`         | unset (unrestricted)       | Roots that `cwd`, `dirs`, `files` and derived workspace roots may not escape, symlinks followed; separated by `:` (`;` on Windows) or commas. Input validation, not a sandbox          |
 | `AGY_REDACT`                | `true`                     | Scrub credential-shaped strings from returned text, errors, metadata, and structured content                                                                                           |
-| `AGY_MAX_DELEGATION_DEPTH`  | `1`                        | Refuse to delegate once this deep, so Claude → agy → this server → agy cannot loop                                                                                                     |
+| `AGY_MAX_DELEGATION_DEPTH`  | `1`                        | Refuse to delegate once this deep, so host → agy → this server → agy cannot loop                                                                                                       |
 | `AGY_WARM_SESSIONS`         | `true`                     | Keep a resident agy process per conversation so `follow_up` skips the cold start                                                                                                       |
 | `AGY_WARM_MAX`              | `2`                        | Most resident sessions to keep; the least recently used is evicted                                                                                                                     |
 | `AGY_WARM_IDLE_SEC`         | `300`                      | Kill a resident session after this long idle                                                                                                                                           |
@@ -454,11 +454,11 @@ Deliberately not addressed, so they are not mistaken for oversights:
 ## Development
 
 ```bash
-npm install
+npm ci
 npm test           # unit + fake-CLI process tests; no paid model calls
 npm run typecheck
 npm run build      # esbuild → dist/index.js
-npm run check:release # package, lockfile and registry versions agree
+npm run check:release # package, executable, lockfile and registry metadata agree
 npm run test:package  # empty production install, tarball, stdio and bundled skills
 ```
 

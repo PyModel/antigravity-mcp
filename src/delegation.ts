@@ -30,6 +30,7 @@ import {
 import { modeFor, TOOLS, type ToolDef } from "./tools.js";
 import { UsageLedger } from "./usage.js";
 import { WarmSessions, WarmTimeout, WarmUnavailable, type WarmDeps } from "./warm.js";
+import { SERVER_NAME } from "./identity.js";
 
 export interface DelegationRequest {
   tool: ToolDef;
@@ -201,8 +202,8 @@ export class DelegationDepthError extends Error {
   constructor(depth: number, max: number) {
     super(
       `Refusing to delegate: this server is already ${depth} delegation(s) deep ` +
-        `(limit ${max}). claude-agy-mcp is registered as an MCP server inside the agy ` +
-        `session that called it, so the call would loop Claude -> agy -> claude-agy-mcp -> agy ` +
+        `(limit ${max}). ${SERVER_NAME} is registered as an MCP server inside the agy ` +
+        `session that called it, so the call would loop host -> agy -> ${SERVER_NAME} -> agy ` +
         `until the quota is gone. Unregister it with \`agy mcp remove\`, or raise ` +
         `AGY_MAX_DELEGATION_DEPTH if the nesting is deliberate.`,
     );

@@ -713,17 +713,22 @@ describe("bounded buffers and leftover logs", () => {
     expect(dropped).toBeGreaterThan(0);
   });
 
-  it("removes run logs a dead bridge left behind, and only those", () => {
+  it("removes abandoned logs under either product name while preserving live and unrelated paths", () => {
     const dir = tmp("agy-sweep-");
     // A pid that certainly belonged to a process that has exited: a fixed large
     // number can be live on a host with a high pid_max.
     const exited = spawnSync(process.execPath, ["-e", ""]).pid;
-    const dead = path.join(dir, `claude-agy-mcp-${exited}-abc`);
-    const mine = path.join(dir, `claude-agy-mcp-${process.pid}-def`);
+    const dead = path.join(dir, `antigravity-mcp-${exited}-abc`);
+    const oldDead = path.join(dir, `claude-agy-mcp-${exited}-abc`);
+    const mine = path.join(dir, `antigravity-mcp-${process.pid}-def`);
+    const oldLive = path.join(dir, `claude-agy-mcp-${process.pid}-def`);
     const other = path.join(dir, "unrelated-999999-x");
-    for (const d of [dead, mine, other]) mkdirSync(d);
-    writeFileSync(path.join(dead, "run.log"), "prompt text");
+    const lookalike = path.join(dir, `unrelated-antigravity-mcp-${exited}-abc`);
+    for (const d of [dead, oldDead, mine, oldLive, other, lookalike]) mkdirSync(d);
+    for (const d of [dead, oldDead]) writeFileSync(path.join(d, "run.log"), "prompt text");
     sweepStaleLogs(dir);
-    expect(readdirSync(dir).sort()).toEqual([path.basename(mine), path.basename(other)].sort());
+    expect(readdirSync(dir).sort()).toEqual(
+      [mine, oldLive, other, lookalike].map((d) => path.basename(d)).sort(),
+    );
   });
 });

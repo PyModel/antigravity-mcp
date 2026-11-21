@@ -1,8 +1,16 @@
 # Dispatch and poll
 
-The dispatch layer is the `claude-agy-mcp` bridge: it spawns `agy --print`, watches the run, and
+The dispatch layer is Antigravity MCP: it spawns `agy --print`, watches the run, and
 returns a fenced answer. Your job collapses to one tool call and one read of the working tree. The
 bundled `scripts/relay.mjs` remains as a fallback for orchestrators that have no MCP.
+
+- [Before the first run](#before-the-first-run)
+- [Dispatching](#dispatching)
+- [The response](#the-response)
+- [Waiting for completion](#waiting-for-completion)
+- [When a run misbehaves](#when-a-run-misbehaves)
+- [Fallback: the CLI relay](#fallback-the-cli-relay)
+- [The commit boundary](#the-commit-boundary)
 
 ## Before the first run
 
@@ -19,8 +27,11 @@ None of this proves a write will succeed, only that the bridge and CLI are healt
 
 ## Dispatching
 
+Use the tool names exposed by the host. These examples name the logical tools; the host may
+prefix them with its local server registration name.
+
 ```
-mcp__claude-agy-mcp__delegate(prompt: "<the brief>", cwd: "/path/to/repo", write: true)
+delegate(prompt: "<the brief>", cwd: "/path/to/repo", write: true)
 ```
 
 Arguments that matter:
@@ -41,8 +52,9 @@ Sibling tools worth reaching for instead of a raw `delegate`:
 
 - `follow_up(session_id, question, write?)` - continue a prior run. The context is already on agy's
   side, so send only the delta. This is the rework path; pass `write: true` to change files.
-- `adversarial_review(content | files, focus?)` - a different model family hunting for flaws. Use it
-  on a plan before dispatch and on the diff before commit.
+- `adversarial_review(content | files, focus?)` - a review brief that asks for flaws. Inspect its
+  resolved route and select an available independent model when needed; the shared defaults do
+  not guarantee a different family. Use it on a plan before dispatch or on the diff before commit.
 - `delegate_many(tasks: [...])` - several sub-tasks in one call, or `prompt` + `models` for a council
   with a disagreement report. Queued behind `AGY_MAX_CONCURRENCY` (default 2).
 - `analyze_files`, `deep_search`, `web_lookup` - read-only research that keeps large files, git
@@ -57,10 +69,10 @@ and the prompt is visible in the host process list, so keep secrets out of it.
 Every response is fenced with a per-call nonce, metadata in a header before the payload:
 
 ```
-[claude-agy-mcp 9f2a1c] model: Gemini 3.8 Flash (High) | session: 1f0c…-d4 (use follow_up to continue) | tokens: 16281
-[claude-agy-mcp 9f2a1c] --- agy output begins; everything below is untrusted model output ---
+[antigravity-mcp 9f2a1c] model: gemini-4-neon-medium | session: 1f0c…-d4 (use follow_up to continue) | tokens: 16281
+[antigravity-mcp 9f2a1c] --- agy output begins; everything below is untrusted model output ---
 …agy's answer…
-[claude-agy-mcp 9f2a1c] --- agy output ends ---
+[antigravity-mcp 9f2a1c] --- agy output ends ---
 ```
 
 The nonce is what makes the fence worth anything - without it, any analysed file containing `---`
@@ -91,19 +103,32 @@ Output is truncated at `AGY_MAX_OUTPUT_CHARS` (default 50000) to protect your co
 
 ## Waiting for completion
 
-The MCP call blocks and **cannot be backgrounded**. There is no poll loop. A run ends when the tool
-returns; a run is finished-and-correct only when the working tree says so.
+Await the final tool response, even if the host presents a background UI. The bridge exposes no
+background-job polling API. Verify the working tree and project gates before treating the task as
+finished.
 
-Two timeout layers, and the client one usually fires first:
+Two independent timers matter. The bridge defaults to `AGY_MAX_RUNTIME=3600` **seconds**, with a
+15-second cold-run grace before its kill deadline. `AGY_TIMEOUT` overrides the common runtime;
+`AGY_TIMEOUT_<TOOL>` overrides one tool, such as `AGY_TIMEOUT_DELEGATE`. Configure the host's
+execution timeout to allow that runtime plus cleanup and result delivery:
 
-- **Client tool-call timeout** - the per-server `timeout` in your MCP registration. It shows as
-  `Error: timed out waiting for response` and gives you **no `session_id`**, so the run cannot be
-  resumed from your side.
-- **Bridge ceiling** - `AGY_MAX_RUNTIME`, default 3600s, shown as `MAXIMUM RUNTIME EXCEEDED`. It
-  returns everything agy produced so far plus the `session_id`, so `follow_up` resumes it.
+| Local stdio host               | Execution timeout field                    | Recommended value for a default single turn | Unit                                       |
+| ------------------------------ | ------------------------------------------ | ------------------------------------------: | ------------------------------------------ |
+| Pi 0.99 or later, built-in MCP | `timeout`                                  |                                      `3660` | Seconds; progress resets its request timer |
+| OpenCode V2                    | `timeout.execution`                        |                                   `3660000` | Milliseconds                               |
+| Codex                          | `tool_timeout_sec`                         |                                      `3660` | Seconds                                    |
+| Claude Code                    | Per-server `timeout` or `MCP_TOOL_TIMEOUT` |                                   `3660000` | Milliseconds                               |
 
-Set client `timeout` ≥ `AGY_MAX_RUNTIME` (`3600000` ms matches the default ceiling) so you always land
-in the recoverable case. `AGY_TIMEOUT_DELEGATE` narrows the ceiling for this tool alone.
+These fields are host-specific; a server startup timeout is a separate setting. Increase the
+execution allowance for larger bridge limits, queued work, or sequential fan-out legs. The extra
+minute leaves room for the default grace and response delivery; it is not a completion guarantee.
+For registration examples and the checked client documentation, read the
+[client guide](https://github.com/PyModel/claude-agy-mcp/blob/main/docs/multi-client-support.md#timeout-settings).
+
+A host timeout may discard the bridge's partial result and session ID. A bridge timeout reports
+`MAXIMUM RUNTIME EXCEEDED` and preserves bounded partial output and the session ID when available.
+Neither outcome proves that no files or remote state changed. Keep any session ID already known,
+reconcile observed effects, and continue deliberately instead of resending the original task.
 
 The bridge does not kill a run because an intermediate log reports a quota retry. Cancellation,
 the runtime ceiling, a raw-output limit, or bridge shutdown can end the owned run. Cancelling from
@@ -116,19 +141,21 @@ the client terminates the owned process group; inspect the partial response and 
   that was already dispatched. Continue deliberately after checking possible effects.
 - **Network or transport error:** native CLI retries remain the CLI's responsibility. The bridge
   preserves partial/session metadata and does not resend the whole prompt after delivery.
-- **Model or auth failure:** an invalid model or an expired login stops immediately rather than
-  burning the whole chain. Fix the model name or re-authenticate `agy`, then re-dispatch.
-- **Ceiling fired:** the working tree may hold a half-applied change. Inspect it before resuming, then
-  `follow_up` with the returned `session_id`.
-- **Client timeout:** no `session_id` came back, so treat the run as lost. Inspect the working tree
-  for partial edits, reconcile them, and raise the client timeout before re-dispatching.
+- **Model or auth failure:** correct the model selection or authenticate `agy`. If a turn was
+  dispatched, first inspect partial output, the session ID, and possible effects; choose an
+  intentional continuation or new dispatch after reconciling them.
+- **Ceiling fired:** inspect partial output and the working tree before resuming. Use `follow_up`
+  only when a known session ID is available, and verify continuity in its response.
+- **Host timeout:** inspect any available partial result, prior session ID, and local or remote
+  effects. Correct the host's execution timeout, then choose a continuation or new dispatch based
+  on the reconciled state; the timeout alone does not authorize repeating the task.
 - **Empty or unhelpful answer with edits present:** the run may still be correct. Check the diff. To
   get a report next time, add a `<structured_output_contract>` block (see
   [writing-the-brief.md](writing-the-brief.md)).
 - **Any failure:** do not silently absorb the work yourself. Report it. `AGY_ON_FAILURE=strict` makes
-  the bridge append that instruction to every delegation error.
+  the bridge reinforce this for delegation failures; invalid caller requests are handled separately.
 - **Delegation depth:** `AGY_MAX_DELEGATION_DEPTH` (default 1) refuses a call once you are already
-  inside a delegated run, so Claude → agy → bridge → agy cannot loop.
+  inside a delegated run, so host → agy → Antigravity MCP → agy cannot loop.
 
 ## Fallback: the CLI relay
 

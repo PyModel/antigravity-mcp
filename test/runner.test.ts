@@ -344,7 +344,7 @@ describe("runAgy", () => {
     const agy = fakeAgy({ answer: "answer" });
     await run({ prompt: "q", cwd: "/repo", timeoutSec: 600 }, agy);
     const logPath = valueOf(agy.runs[0]!, "--log-file")!;
-    expect(logPath).toMatch(/claude-agy-mcp-\d+-/);
+    expect(logPath).toMatch(/antigravity-mcp-\d+-/);
     const { existsSync } = await import("node:fs");
     expect(existsSync(logPath)).toBe(false);
   });

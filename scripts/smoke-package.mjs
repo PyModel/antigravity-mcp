@@ -45,6 +45,11 @@ try {
   for (const file of [
     "dist/index.js",
     "README.md",
+    "AGENTS.md",
+    "CLAUDE.md",
+    "docs/multi-client-support.md",
+    "assets/banner.svg",
+    "assets/benchmarks.svg",
     "scripts/install-skills.mjs",
     "skills/agy-delegate/SKILL.md",
     "skills/agy-delegate/scripts/relay.mjs",
@@ -75,7 +80,14 @@ try {
     ],
     project,
   );
-  const installed = path.join(project, "node_modules", "@pymodel", "claude-agy-mcp");
+  const installed = path.join(project, "node_modules", ...pkg.name.split("/"));
+  const primaryBin = pkg.name.split("/").at(-1);
+  for (const bin of Object.keys(pkg.bin)) {
+    assert(
+      existsSync(path.join(project, "node_modules", ".bin", bin)),
+      `missing executable: ${bin}`,
+    );
+  }
   const requireInstalled = createRequire(path.join(installed, "package.json"));
   const { Client } = await import(
     pathToFileURL(requireInstalled.resolve("@modelcontextprotocol/sdk/client/index.js")).href
@@ -105,13 +117,14 @@ try {
   client = new Client({ name: "package-smoke", version: "1.0.0" });
   await client.connect(
     new StdioClientTransport({
-      command: process.execPath,
-      args: [path.join(installed, "dist", "index.js")],
+      command: path.join(project, "node_modules", ".bin", primaryBin),
       env,
       stderr: "pipe",
     }),
   );
   assert.equal(client.getServerVersion()?.version, pkg.version);
+  assert.equal(client.getServerVersion()?.name, primaryBin);
+  assert.equal(client.getServerVersion()?.title, "Antigravity MCP");
   const { tools } = await client.listTools();
   for (const name of ["delegate", "follow_up", "set_model", "delegate_many", "agy_status"]) {
     assert(
@@ -129,14 +142,31 @@ try {
     arguments: { session_id: "conv-e2e-1", question: "continue package smoke", cwd: work },
   });
   assert(!next.isError, JSON.stringify(next));
+  await client.close();
+  client = new Client({ name: "legacy-executable-smoke", version: "1.0.0" });
+  await client.connect(
+    new StdioClientTransport({
+      command: path.join(project, "node_modules", ".bin", "claude-agy-mcp"),
+      env,
+      stderr: "pipe",
+    }),
+  );
+  assert.equal(client.getServerVersion()?.name, primaryBin);
+  assert.equal(client.getServerVersion()?.version, pkg.version);
   const skillsDir = path.join(temp, "installed-skills");
   run(
-    process.execPath,
-    [path.join(installed, "scripts", "install-skills.mjs"), "--dir", skillsDir],
+    path.join(project, "node_modules", ".bin", "antigravity-mcp-install-skills"),
+    ["--dir", skillsDir],
     project,
   );
   assert(existsSync(path.join(skillsDir, "agy-delegate", "SKILL.md")));
   assert(existsSync(path.join(skillsDir, "agy-delegate", "scripts", "relay.mjs")));
+  const legacyHelp = run(
+    path.join(project, "node_modules", ".bin", "claude-agy-mcp-install-skills"),
+    ["--help"],
+    project,
+  );
+  assert(legacyHelp.includes("antigravity-mcp-install-skills"));
   console.log(
     `Package smoke passed: ${pkg.name}@${pkg.version}, Node ${process.versions.node}, production install, stdio, follow-up, bundled skills`,
   );

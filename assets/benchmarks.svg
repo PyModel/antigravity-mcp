@@ -1,137 +1,80 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 360" width="1280" height="360" role="img" aria-label="Gemini 3.8 Flash Coding Benchmarks">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 500" width="1280" height="500" role="img" aria-labelledby="capabilities-title capabilities-description">
+  <title id="capabilities-title">Antigravity MCP — one bridge between your host and Gemini 4 Neon</title>
+  <desc id="capabilities-description">Architecture and capabilities, not benchmark results. Pi, OpenCode, Codex, or Claude Code connects as an MCP client to Antigravity MCP. The bridge resolves account model IDs, continues conversation sessions, and applies output limits and redaction. The Antigravity CLI runs an available model such as Gemini 4 Neon, whose listed effort tiers are low, medium, high, and xhigh. Findings, usage, session IDs, and partial-result status return to the host.</desc>
   <defs>
-    <!-- Background Gradient -->
-    <linearGradient id="bgBench" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#080a0f"/>
-      <stop offset="50%" stop-color="#0c0f17"/>
-      <stop offset="100%" stop-color="#10141f"/>
+    <linearGradient id="capabilities-bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b1522"/>
+      <stop offset="1" stop-color="#0c1019"/>
     </linearGradient>
-
-    <radialGradient id="radialAmber" cx="20%" cy="0%" r="50%">
-      <stop offset="0%" stop-color="#f59e0b" stop-opacity="0.10"/>
-      <stop offset="100%" stop-color="#080a0f" stop-opacity="0"/>
-    </radialGradient>
-
-    <!-- Card Background Gradient -->
-    <linearGradient id="benchCardBg" x1="0%" y1="0%" x2="0%" y2="100%">
-      <stop offset="0%" stop-color="#141824"/>
-      <stop offset="100%" stop-color="#0e111a"/>
+    <linearGradient id="capabilities-bridge" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#133437"/>
+      <stop offset="1" stop-color="#132633"/>
     </linearGradient>
-
-    <!-- Border Gradient -->
-    <linearGradient id="benchCardBorder" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#334155" stop-opacity="0.6"/>
-      <stop offset="50%" stop-color="#1e293b" stop-opacity="0.3"/>
-      <stop offset="100%" stop-color="#334155" stop-opacity="0.6"/>
-    </linearGradient>
-
-    <!-- Card Accents -->
-    <linearGradient id="emeraldGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-      <stop offset="0%" stop-color="#10b981"/>
-      <stop offset="100%" stop-color="#34d399"/>
-    </linearGradient>
-
-    <linearGradient id="cyanGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-      <stop offset="0%" stop-color="#0284c7"/>
-      <stop offset="100%" stop-color="#38bdf8"/>
-    </linearGradient>
-
-    <linearGradient id="goldGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-      <stop offset="0%" stop-color="#d97706"/>
-      <stop offset="100%" stop-color="#fbbf24"/>
-    </linearGradient>
-
-    <linearGradient id="purpleGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-      <stop offset="0%" stop-color="#7c3aed"/>
-      <stop offset="100%" stop-color="#a855f7"/>
-    </linearGradient>
-
-    <!-- Shadow -->
-    <filter id="benchShadow" x="-5%" y="-5%" width="110%" height="115%">
-      <feDropShadow dx="0" dy="8" stdDeviation="16" flood-color="#000000" flood-opacity="0.5"/>
-    </filter>
   </defs>
+  <rect x="1" y="1" width="1278" height="498" rx="24" fill="url(#capabilities-bg)" stroke="#263647"/>
+  <g font-family="Arial, Helvetica, sans-serif">
+    <text x="64" y="64" fill="#f0f6fb" font-size="35" font-weight="700" letter-spacing="-0.5">Delegate through one bridge.</text>
+    <text x="64" y="101" fill="#9fb4c7" font-size="21">Choose a listed model, preserve the session, and bring back the result.</text>
+    <text x="1216" y="61" fill="#99d9c9" font-size="15" letter-spacing="1.5" text-anchor="end">ANTIGRAVITY MCP</text>
 
-  <!-- Canvas Surface -->
-  <rect width="1280" height="360" rx="20" fill="url(#bgBench)"/>
-  <rect width="1280" height="360" rx="20" fill="url(#radialAmber)"/>
+    <!-- Host choice: no single client is the privileged entry point. -->
+    <rect x="64" y="146" width="268" height="228" rx="16" fill="#111e2b" stroke="#344958"/>
+    <text x="86" y="180" fill="#8fa9bc" font-size="14" letter-spacing="1.5">01 / YOUR MCP CLIENT</text>
+    <g fill="#dbe8f2" font-size="23" font-weight="600">
+      <text x="86" y="228">Pi</text>
+      <text x="198" y="228">OpenCode</text>
+      <text x="86" y="274">Codex</text>
+      <text x="198" y="274" font-size="20">Claude Code</text>
+    </g>
+    <path d="M 86 301 H 310" stroke="#2b4051"/>
+    <text x="86" y="337" fill="#9fb6c7" font-size="19">Your tools and workflow</text>
 
-  <!-- Top Title & Badge Group -->
-  <g transform="translate(60, 42)">
-    <rect x="0" y="0" width="280" height="22" rx="11" fill="#1c1913" stroke="#d97706" stroke-opacity="0.4" stroke-width="1"/>
-    <circle cx="11" cy="11" r="3.5" fill="#f59e0b"/>
-    <text x="22" y="15" font-family="system-ui, -apple-system, sans-serif" font-size="10.5" font-weight="700" letter-spacing="1px" fill="#fbbf24">GOOGLE DEEPMIND · GEMINI 3.8 FLASH</text>
-    
-    <text x="0" y="52" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="22" font-weight="700" fill="#ffffff">Google's Flagship Coding &amp; Reasoning Workhorse</text>
-    <text x="0" y="74" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="13.5" fill="#8492a6">Engineered for long-horizon repository execution, multi-step terminal planning, and context-free Claude delegation.</text>
-  </g>
-
-  <!-- 4 Benchmark Metric Cards -->
-  <g transform="translate(60, 142)" filter="url(#benchShadow)">
-    
-    <!-- CARD 1: DeepSWE v1.1 -->
-    <g transform="translate(0, 0)">
-      <rect width="272" height="176" rx="14" fill="url(#benchCardBg)" stroke="url(#benchCardBorder)" stroke-width="1.2"/>
-      <rect x="18" y="16" width="94" height="20" rx="6" fill="#062e24" stroke="#047857" stroke-width="1"/>
-      <text x="26" y="30" font-family="ui-monospace, 'SF Mono', Menlo, monospace" font-size="11" font-weight="600" fill="#34d399">DeepSWE v1.1</text>
-      
-      <text x="18" y="86" font-family="system-ui, -apple-system, sans-serif" font-size="38" font-weight="800" fill="#34d399" letter-spacing="-1px">73.7%</text>
-      
-      <!-- Progress Track -->
-      <rect x="18" y="102" width="236" height="4" rx="2" fill="#1e293b"/>
-      <rect x="18" y="102" width="174" height="4" rx="2" fill="url(#emeraldGrad)"/>
-      
-      <text x="18" y="128" font-family="system-ui, -apple-system, sans-serif" font-size="12" font-weight="600" fill="#34d399">▲ +8.4 pts <tspan fill="#64748b" font-weight="400">vs 3.7 Flash (65.3%)</tspan></text>
-      <text x="18" y="148" font-family="system-ui, -apple-system, sans-serif" font-size="11" fill="#8492a6">Repository-level issue resolution</text>
+    <!-- The MCP surface is separate from the agy subprocess. -->
+    <rect x="414" y="146" width="388" height="228" rx="16" fill="url(#capabilities-bridge)" stroke="#5eae9f"/>
+    <text x="440" y="180" fill="#9ed6c9" font-size="14" letter-spacing="1.5">02 / THE BRIDGE</text>
+    <text x="440" y="225" fill="#f0f8f7" font-size="30" font-weight="700" letter-spacing="-0.4">Antigravity MCP</text>
+    <g fill="#8be0bd">
+      <circle cx="445" cy="265" r="3"/>
+      <circle cx="445" cy="300" r="3"/>
+      <circle cx="445" cy="335" r="3"/>
+    </g>
+    <g fill="#b8d2d8" font-size="20">
+      <text x="462" y="272">Resolve account model IDs</text>
+      <text x="462" y="307">Continue conversation sessions</text>
+      <text x="462" y="342">Output limits and redaction</text>
     </g>
 
-    <!-- CARD 2: Terminal-Bench 2.1 -->
-    <g transform="translate(296, 0)">
-      <rect width="272" height="176" rx="14" fill="url(#benchCardBg)" stroke="url(#benchCardBorder)" stroke-width="1.2"/>
-      <rect x="18" y="16" width="138" height="20" rx="6" fill="#0c2d48" stroke="#0369a1" stroke-width="1"/>
-      <text x="26" y="30" font-family="ui-monospace, 'SF Mono', Menlo, monospace" font-size="11" font-weight="600" fill="#38bdf8">Terminal-Bench 2.1</text>
-      
-      <text x="18" y="86" font-family="system-ui, -apple-system, sans-serif" font-size="38" font-weight="800" fill="#38bdf8" letter-spacing="-1px">89.4%</text>
-      
-      <!-- Progress Track -->
-      <rect x="18" y="102" width="236" height="4" rx="2" fill="#1e293b"/>
-      <rect x="18" y="102" width="211" height="4" rx="2" fill="url(#cyanGrad)"/>
-      
-      <text x="18" y="128" font-family="system-ui, -apple-system, sans-serif" font-size="12" font-weight="600" fill="#38bdf8">▲ +3.6 pts <tspan fill="#64748b" font-weight="400">vs 3.7 Flash (85.8%)</tspan></text>
-      <text x="18" y="148" font-family="system-ui, -apple-system, sans-serif" font-size="11" fill="#8492a6">Agentic CLI &amp; command execution</text>
+    <!-- Model availability is determined by the user's account. -->
+    <rect x="884" y="146" width="332" height="228" rx="16" fill="#111e2b" stroke="#344958"/>
+    <text x="908" y="180" fill="#8fa9bc" font-size="14" letter-spacing="1.5">03 / ANTIGRAVITY CLI</text>
+    <text x="908" y="225" fill="#b0efd0" font-size="30" font-weight="700" letter-spacing="-0.4">Gemini 4 Neon</text>
+    <g fill="#192d3b" stroke="#36515e">
+      <rect x="908" y="248" width="132" height="34" rx="7"/>
+      <rect x="1052" y="248" width="140" height="34" rx="7"/>
+      <rect x="908" y="292" width="132" height="34" rx="7"/>
+      <rect x="1052" y="292" width="140" height="34" rx="7"/>
+    </g>
+    <g fill="#bed2df" font-size="18" text-anchor="middle">
+      <text x="974" y="271">low</text>
+      <text x="1122" y="271">medium</text>
+      <text x="974" y="315">high</text>
+      <text x="1122" y="315">xhigh</text>
+    </g>
+    <text x="1050" y="353" fill="#8fa9bc" font-size="17" text-anchor="middle">Use a variant listed by agy models.</text>
+
+    <!-- Request and response paths. -->
+    <g fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-width="2">
+      <path d="M 346 252 H 398 M 392 246 L 398 252 L 392 258 M 816 252 H 870 M 864 246 L 870 252 L 864 258" stroke="#8be0bd"/>
+      <path d="M 398 276 H 346 M 352 270 L 346 276 L 352 282 M 870 276 H 816 M 822 270 L 816 276 L 822 282" stroke="#708da3"/>
+    </g>
+    <g fill="#9bb3c4" font-size="16" text-anchor="middle">
+      <text x="373" y="232">MCP</text>
+      <text x="843" y="232">agy</text>
     </g>
 
-    <!-- CARD 3: OSWorld-2.0 -->
-    <g transform="translate(592, 0)">
-      <rect width="272" height="176" rx="14" fill="url(#benchCardBg)" stroke="url(#benchCardBorder)" stroke-width="1.2"/>
-      <rect x="18" y="16" width="96" height="20" rx="6" fill="#382109" stroke="#b45309" stroke-width="1"/>
-      <text x="26" y="30" font-family="ui-monospace, 'SF Mono', Menlo, monospace" font-size="11" font-weight="600" fill="#fbbf24">OSWorld-2.0</text>
-      
-      <text x="18" y="86" font-family="system-ui, -apple-system, sans-serif" font-size="38" font-weight="800" fill="#fbbf24" letter-spacing="-1px">59.0%</text>
-      
-      <!-- Progress Track -->
-      <rect x="18" y="102" width="236" height="4" rx="2" fill="#1e293b"/>
-      <rect x="18" y="102" width="139" height="4" rx="2" fill="url(#goldGrad)"/>
-      
-      <text x="18" y="128" font-family="system-ui, -apple-system, sans-serif" font-size="12" font-weight="600" fill="#fbbf24">▲ +8.4 pts <tspan fill="#64748b" font-weight="400">vs 3.7 Flash (50.6%)</tspan></text>
-      <text x="18" y="148" font-family="system-ui, -apple-system, sans-serif" font-size="11" fill="#8492a6">Agentic computer use</text>
-    </g>
-
-    <!-- CARD 4: HLE-Verified -->
-    <g transform="translate(888, 0)">
-      <rect width="272" height="176" rx="14" fill="url(#benchCardBg)" stroke="url(#benchCardBorder)" stroke-width="1.2"/>
-      <rect x="18" y="16" width="104" height="20" rx="6" fill="#29144d" stroke="#6d28d9" stroke-width="1"/>
-      <text x="26" y="30" font-family="ui-monospace, 'SF Mono', Menlo, monospace" font-size="11" font-weight="600" fill="#c084fc">HLE-Verified</text>
-      
-      <text x="18" y="86" font-family="system-ui, -apple-system, sans-serif" font-size="38" font-weight="800" fill="#c084fc" letter-spacing="-1px">54.9%</text>
-      
-      <!-- Progress Track -->
-      <rect x="18" y="102" width="236" height="4" rx="2" fill="#1e293b"/>
-      <rect x="18" y="102" width="130" height="4" rx="2" fill="url(#purpleGrad)"/>
-      
-      <text x="18" y="128" font-family="system-ui, -apple-system, sans-serif" font-size="12" font-weight="600" fill="#c084fc">▲ Ahead of Opus 5 <tspan fill="#64748b" font-weight="400">(54.4%) · 3.7 Flash 53.6%</tspan></text>
-      <text x="18" y="148" font-family="system-ui, -apple-system, sans-serif" font-size="11" fill="#8492a6">Multi-step expert reasoning</text>
-    </g>
-
+    <path d="M 64 409 H 1216" stroke="#293c4b"/>
+    <text x="64" y="444" fill="#c5d6e3" font-size="21">Findings · Usage · Session IDs · Partial-result status</text>
+    <text x="64" y="476" fill="#8fa9bc" font-size="18">Model availability follows your account's live agy inventory.</text>
+    <path d="M 1200 443 H 1106 M 1115 434 L 1106 443 L 1115 452" fill="none" stroke="#83cfb8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
   </g>
 </svg>

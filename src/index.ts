@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { createServer } from "./server.js";
+import { SERVER_NAME } from "./identity.js";
 
 createServer()
   .then(async (server) => {
@@ -14,6 +15,6 @@ createServer()
     process.stdin.once("close", exit);
   })
   .catch((err) => {
-    console.error("claude-agy-mcp failed to start:", err);
+    console.error(`${SERVER_NAME} failed to start:`, err);
     process.exit(1);
   });

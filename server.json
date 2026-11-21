@@ -1,7 +1,7 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.PyModel/claude-agy-mcp",
-  "description": "Delegate tasks to Antigravity CLI with account-aware model selection, cooldowns, and multi-turn sessions.",
+  "name": "io.github.PyModel/antigravity-mcp",
+  "description": "Connect coding agents to Antigravity models for research, code review, and implementation.",
   "repository": {
     "url": "https://github.com/PyModel/claude-agy-mcp",
     "source": "github"
@@ -10,7 +10,7 @@
   "packages": [
     {
       "registryType": "npm",
-      "identifier": "@pymodel/claude-agy-mcp",
+      "identifier": "@pymodel/antigravity-mcp",
       "version": "3.2.0",
       "transport": {
         "type": "stdio"

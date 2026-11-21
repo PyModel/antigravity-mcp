@@ -1,12 +1,12 @@
-import { describe, it, expect } from "vitest";
-import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { afterEach, describe, it, expect, vi } from "vitest";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { build } from "esbuild";
-import { cacheDir, FileCooldownStore } from "../src/cooldown-store.js";
+import { cacheDir, legacyCacheDir, FileCooldownStore } from "../src/cooldown-store.js";
 import { CooldownRegistry } from "../src/quota.js";
 
 function scratch(): { dir: string; cleanup: () => void } {
@@ -16,8 +16,9 @@ function scratch(): { dir: string; cleanup: () => void } {
 
 describe("cacheDir", () => {
   it("honours XDG_CACHE_HOME, falling back to ~/.cache", () => {
-    expect(cacheDir({ XDG_CACHE_HOME: "/x" })).toBe("/x/claude-agy-mcp");
-    expect(cacheDir({})).toMatch(/\.cache\/claude-agy-mcp$/);
+    expect(cacheDir({ XDG_CACHE_HOME: "/x" })).toBe("/x/antigravity-mcp");
+    expect(cacheDir({})).toMatch(/\.cache\/antigravity-mcp$/);
+    expect(legacyCacheDir({ XDG_CACHE_HOME: "/x" })).toBe("/x/claude-agy-mcp");
   });
 });
 
@@ -75,6 +76,80 @@ describe("FileCooldownStore", () => {
       const store = new FileCooldownStore(path.join(dir, "file", "nope"));
       expect(() => store.save({ A: 1 }, 0)).not.toThrow();
       expect(store.load()).toEqual({ A: 1 }); // still honoured in this process
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+describe("FileCooldownStore product migration", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("merges both snapshot and record formats across both names, retaining the longest expiry", () => {
+    const { dir, cleanup } = scratch();
+    try {
+      const current = path.join(dir, "antigravity-mcp");
+      const legacy = path.join(dir, "claude-agy-mcp");
+      const old = new FileCooldownStore(legacy);
+      old.save({ shared: 100, oldRecord: 110 }, 0);
+      writeFileSync(path.join(legacy, "cooldowns.json"), '{"shared":300,"oldSnapshot":120}');
+      new FileCooldownStore(current).save({ shared: 200, newRecord: 210 }, 0);
+      writeFileSync(path.join(current, "cooldowns.json"), '{"shared":250,"newSnapshot":220}');
+
+      const migrated = new FileCooldownStore(current, legacy);
+      expect(migrated.load()).toEqual({
+        shared: 300,
+        oldRecord: 110,
+        oldSnapshot: 120,
+        newRecord: 210,
+        newSnapshot: 220,
+      });
+      old.save({ shared: 400 }, 0);
+      expect(migrated.load().shared).toBe(400);
+      new FileCooldownStore(current).save({ shared: 500 }, 0);
+      expect(migrated.load().shared).toBe(500);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("reads the old default cache without migrating files and confines writes and cleanup to the new cache", () => {
+    const { dir, cleanup } = scratch();
+    try {
+      vi.stubEnv("XDG_CACHE_HOME", dir);
+      new FileCooldownStore(legacyCacheDir()).save({ expired: 50, oldActive: 300 }, 0);
+      const oldRecords = path.join(legacyCacheDir(), "cooldowns.d");
+      const before = readdirSync(oldRecords)
+        .sort()
+        .map((file) => [file, readFileSync(path.join(oldRecords, file), "utf8")]);
+      const migrated = new FileCooldownStore();
+      expect(migrated.load()).toEqual({ expired: 50, oldActive: 300 });
+      expect(existsSync(cacheDir())).toBe(false);
+
+      migrated.save({ currentExpired: 50 }, 0);
+      migrated.save({ newActive: 400 }, 100);
+      expect(new FileCooldownStore(cacheDir()).load()).toEqual({ newActive: 400 });
+      expect(new FileCooldownStore().load()).toEqual({
+        expired: 50,
+        oldActive: 300,
+        newActive: 400,
+      });
+      expect(
+        readdirSync(oldRecords)
+          .sort()
+          .map((file) => [file, readFileSync(path.join(oldRecords, file), "utf8")]),
+      ).toEqual(before);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("does not read the machine's legacy cache for an explicitly supplied directory", () => {
+    const { dir, cleanup } = scratch();
+    try {
+      vi.stubEnv("XDG_CACHE_HOME", dir);
+      new FileCooldownStore(legacyCacheDir()).save({ oldActive: 300 }, 0);
+      expect(new FileCooldownStore(path.join(dir, "isolated")).load()).toEqual({});
     } finally {
       cleanup();
     }

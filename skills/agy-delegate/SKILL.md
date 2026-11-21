@@ -1,23 +1,22 @@
 ---
 name: agy-delegate
 description: >-
-  Delegate a coding task to the Google Antigravity CLI (`agy`) as a separate implementer, then review
-  its diff and land it yourself. Use this whenever the user wants to hand implementation work to
-  Antigravity or agy - phrasings like "have Antigravity do X", "delegate this to agy", "run it through
-  agy", or "use Antigravity to implement/fix/refactor" - or wants to run a queue of coding tasks
-  through agy while staying the reviewer. DO NOT USE for tasks small enough to do inline, or when the
-  user wants the code written directly without delegating.
+  Delegate implementation or a queue of coding tasks through Antigravity MCP or its bundled CLI
+  relay, then review the diff and project gates. Use when the user asks Antigravity or agy to
+  implement, fix, refactor, or run tasks while the calling agent keeps the reviewer and commit role.
+  Handle small inline edits directly.
 license: MIT
 compatibility: >-
-  Primary path requires the `claude-agy-mcp` MCP server registered with the orchestrator, plus the
-  `agy` CLI installed and authenticated, and git. Orchestrators without MCP fall back to the bundled
-  `scripts/relay.mjs`, which needs only Node.js, git, and a shell (bash/zsh on macOS/Linux, or Git
-  Bash/WSL on Windows).
+  Primary path requires the `antigravity-mcp` MCP server registered with the host, plus the
+  `agy` CLI installed and authenticated, and git. Local stdio hosts include Pi >=0.99 with built-in
+  MCP, OpenCode, Codex, and Claude Code. Hosts without MCP fall back to the bundled
+  `scripts/relay.mjs`, which requires Node.js, git, and a supported authenticated AGY environment.
+  The MCP package supports macOS and Linux; use WSL only where the required Linux CLI is available.
 metadata:
-  version: 0.8.0
+  version: 0.9.0
 ---
 
-# Antigravity Delegate
+# Delegate with Antigravity MCP
 
 You are the **orchestrator**. This skill lets you hand a bounded coding task to a separate
 **implementer** - the Google Antigravity CLI (`agy`) - then review what it produced and land it
@@ -26,7 +25,7 @@ conversation; you verify and commit.
 
 Choose the available dispatch path, then apply the review loop below:
 
-- **MCP (preferred)** - the `claude-agy-mcp` bridge exposes `delegate`, `follow_up`,
+- **MCP (preferred)** - Antigravity MCP exposes `delegate`, `follow_up`,
   `adversarial_review`, `delegate_many` and friends as tools. Use this whenever the tools are
   available.
 - **CLI relay (fallback)** - `scripts/relay.mjs` wraps `agy --print` and writes a `result.json`. Use
@@ -43,23 +42,23 @@ Choose the available dispatch path, then apply the review loop below:
 
 ## Prerequisites (check once)
 
-1. **Load the tools.** In an orchestrator where the bridge's tools are deferred, load them in a
-   **single** call, not one per tool:
-
-   ```
-   ToolSearch("select:mcp__claude-agy-mcp__delegate,mcp__claude-agy-mcp__follow_up,mcp__claude-agy-mcp__adversarial_review,mcp__claude-agy-mcp__delegate_many,mcp__claude-agy-mcp__agy_status,mcp__claude-agy-mcp__set_model")
-   ```
+1. **Discover the tools through the host.** Locate `delegate`, `follow_up`,
+   `adversarial_review`, `delegate_many`, `agy_status`, and `set_model`. Use the host's
+   exposed names: prefixes follow its registration, and there is no shared discovery API.
+   If the host defers tools, load the needed tools together through its discovery mechanism.
+   The examples below use logical names; map them to the discovered tools before calling.
 
 2. **Call `agy_status`.** This sends no model prompt; metadata probes may invoke the CLI. It reports the agy
    version, the models on offer, the resolved model chain per tool, quota cooldowns, in-flight runs,
    and whether a `set_model` choice has already been recorded.
 
-3. **Settle the model once, if `agy_status` shows no choice recorded.** The bridge defaults to
-   `AGY_ASK_MODEL=true` and **refuses to delegate** until `set_model` has been called - the first
-   delegation returns an error, not a result. If the user already specified a choice, record it
-   without asking again. Otherwise ask once whether to accept the configured default or choose a
-   listed variant, then call `set_model`. The choice is saved per machine. An explicit `model`
-   on a single call still wins for that call.
+3. **Settle the model once, if `agy_status` shows no choice recorded.** With the default
+   `AGY_ASK_MODEL=true`, a host that supports form elicitation can show the choice before the
+   first delegation. Other hosts receive an actionable error asking for `set_model`; no task
+   is dispatched until the choice is settled. Record a choice the user already authorized
+   without asking again. Otherwise use the form or ask once, then call `set_model`. The choice
+   is saved per machine. An explicit per-call `model` selects that call's model without this gate;
+   `AGY_ASK_MODEL=false` skips the gate but still honors an existing saved preference.
 
 4. **Know the working root.** Pass it as `cwd` on every call; add sibling repos or a base worktree
    through `dirs`.
@@ -88,7 +87,7 @@ Antigravity it will **not** commit (you will). Keep one task per brief. Full gui
 Send the brief as the `prompt` of a `delegate` call with `write: true`:
 
 ```
-mcp__claude-agy-mcp__delegate(
+delegate(
   prompt: "<the brief>",
   cwd: "/path/to/repo",
   write: true            // omit for a read-only run; see the permission model below
@@ -113,22 +112,20 @@ Mechanics, the response shape, and the CLI-relay fallback:
 
 ### 3. Wait for completion
 
-**An MCP call blocks and cannot be backgrounded.** There is no polling loop and no progress file to
-watch; the tool call returns when the run is over. Two timeout layers sit behind it, and the client's
-usually bites first:
+Await the tool's final response. The bridge exposes no background-job polling tool; a host may
+present its own background UI. The default bridge ceiling is 3600 seconds, with a 15-second
+cold-run grace. Give the host at least 3660 seconds for a default single turn, using the
+[host-specific timeout fields and units](references/dispatch-and-poll.md) under "Waiting for completion".
+Allow more for queued work or sequential fan-out legs.
 
-- **Client tool-call timeout** - your own MCP client's per-server `timeout`, set in its server
-  registration (`3600000` ms is the matching value). If it fires you get `Error: timed out waiting for
-response` **and no `session_id`**, so the run is unrecoverable from your side even though agy may
-  still be working.
-- **Bridge ceiling** - `AGY_MAX_RUNTIME`, default 3600s. If it fires you get everything agy produced
-  so far _plus_ the `session_id`, and `follow_up` resumes from there.
-
-Keep client `timeout` ≥ `AGY_MAX_RUNTIME` so you land in the recoverable case. Either way, files agy
-already wrote are on disk: **read the working tree, not the error text.**
+A host timeout can discard partial output or a session ID. A bridge timeout returns bounded
+recovery information when the CLI reported it; it cannot guarantee a usable session. Preserve any
+known session ID and inspect the result and workspace before an intentional `follow_up` or new
+dispatch. A timeout never proves that the task had no effects.
 
 If a call fails, do not quietly do the work yourself - report the failure. Setting
-`AGY_ON_FAILURE=strict` makes the bridge say so on every error.
+`AGY_ON_FAILURE=strict` reinforces this for delegation failures; invalid caller requests are
+handled separately.
 
 ### 4. Review - do not trust the self-report
 
@@ -160,10 +157,11 @@ diff holds:
 
 ## Permission model
 
-Headless `agy --print` cannot answer a permission prompt, so without
-`--dangerously-skip-permissions` it auto-denies **every** permissioned tool - including `read_file` -
-and a run may end without performing the requested action. The bridge passes the bypass by
-default (`AGY_SKIP_PERMISSIONS=true`). Treat the delegated task as authorized shell access.
+Headless `agy --print` cannot answer an interactive permission prompt. Earlier AGY 1.2.x checks
+observed denied permissioned tools, including file reads, when the permission bypass was off.
+Current behavior depends on the installed CLI and its permission configuration; inspect denied
+actions and completion metadata. The bridge passes `--dangerously-skip-permissions` by default
+(`AGY_SKIP_PERMISSIONS=true`). Treat the delegated task as authorized shell access.
 
 What that means in practice, and what the bridge does about it:
 
