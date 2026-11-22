@@ -27,7 +27,7 @@
 
 Choose Gemini 4 Neon or another model in your account's live inventory. The bridge resolves model IDs, preserves conversation sessions, reports usage and partial failures, and returns bounded results. This is an independently maintained integration with Antigravity.
 
-**Package:** `@pymodel/antigravity-mcp@1.0.0`. Install from [npm](#npm-installation) or use the [source build](#build). Existing users should read the [migration notes](#migration-from-claude-agy-mcp). The GitHub repository has been renamed to [PyModel/antigravity-mcp](https://github.com/PyModel/antigravity-mcp). <!-- x-release-please-version -->
+**Package:** `@pymodel/antigravity-mcp@2.0.0`. Install from [npm](#npm-installation) or use the [source build](#build). Existing users should read the [migration notes](#migration-from-claude-agy-mcp). The GitHub repository has been renamed to [PyModel/antigravity-mcp](https://github.com/PyModel/antigravity-mcp). <!-- x-release-please-version -->
 
 ## Models and plan availability
 
