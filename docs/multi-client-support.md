@@ -8,7 +8,7 @@ it is not an official Google MCP server. Pi, OpenCode, Codex, and Claude Code ca
 launch it as a local process. Other hosts need an MCP stdio client or can use the
 bundled CLI relay described in the [README](../README.md#bundled-skills).
 
-Install `@pymodel/antigravity-mcp@1.0.0` using the [npm instructions](#npm-installation), or build locally. The GitHub repository has been renamed to <!-- x-release-please-version -->
+Install `@pymodel/antigravity-mcp@2.0.0` using the [npm instructions](#npm-installation), or build locally. The GitHub repository has been renamed to <!-- x-release-please-version -->
 [PyModel/antigravity-mcp](https://github.com/PyModel/antigravity-mcp). Existing
 checkouts can update their remote using the
 [migration instructions](../README.md#migration-from-claude-agy-mcp).
