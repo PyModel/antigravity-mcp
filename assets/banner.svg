@@ -30,7 +30,7 @@
       <path d="M 65 72 L 80 43 L 95 72 M 72 60 H 88"/>
       <path d="M 61 68 C 57 58 93 48 99 57 C 103 64 77 76 67 74" stroke-width="1.5"/>
     </g>
-    <text x="112" y="64" fill="#9cbdc3" font-size="15" letter-spacing="1.6">MODEL CONTEXT PROTOCOL / ANTIGRAVITY CLI / v0.1.0</text>
+    <text x="112" y="64" fill="#9cbdc3" font-size="15" letter-spacing="1.6">MODEL CONTEXT PROTOCOL / ANTIGRAVITY CLI / v0.1.0</text> <!-- x-release-please-version -->
     <text x="64" y="148" fill="#f0f6fb" font-size="66" font-weight="700" letter-spacing="-2">Antigravity MCP</text>
     <text x="66" y="211" fill="url(#banner-accent)" font-size="42" font-weight="600" letter-spacing="-0.7">Gemini 4 Neon.</text>
     <text x="66" y="259" fill="#c3d1df" font-size="23">Research, analyze, and implement with agy.</text>
