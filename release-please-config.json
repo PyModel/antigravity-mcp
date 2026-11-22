@@ -1,0 +1,17 @@
+{
+  "release-type": "node",
+  "include-component-in-tag": false,
+  "draft": true,
+  "packages": {
+    ".": {
+      "package-name": "@pymodel/antigravity-mcp",
+      "extra-files": [
+        { "type": "json", "path": "server.json", "jsonpath": "$.version" },
+        { "type": "json", "path": "server.json", "jsonpath": "$.packages[0].version" },
+        "README.md",
+        "docs/multi-client-support.md",
+        "assets/banner.svg"
+      ]
+    }
+  }
+}

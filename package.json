@@ -1,6 +1,6 @@
 {
   "name": "@pymodel/antigravity-mcp",
-  "version": "3.2.0",
+  "version": "0.1.0",
   "description": "Connect coding agents to Antigravity models for research, code review, and implementation over MCP.",
   "mcpName": "io.github.PyModel/antigravity-mcp",
   "type": "module",

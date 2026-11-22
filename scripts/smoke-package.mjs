@@ -39,9 +39,11 @@ try {
   run("npm", ["ci", "--omit=dev", "--no-audit", "--no-fund"], prod);
   assert.equal(existsSync(path.join(prod, "node_modules", ".bin", "husky")), false);
 
-  const packed = JSON.parse(
+  const packResult = JSON.parse(
     run("npm", ["pack", "--json", "--ignore-scripts", "--pack-destination", temp], root),
-  )[0];
+  );
+  const packed = Array.isArray(packResult) ? packResult[0] : packResult[pkg.name];
+  assert.equal(packed?.id, `${pkg.name}@${pkg.version}`, "unexpected npm pack result");
   for (const file of [
     "dist/index.js",
     "README.md",

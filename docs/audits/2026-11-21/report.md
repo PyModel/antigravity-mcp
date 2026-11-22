@@ -1,5 +1,7 @@
 # Codebase audit: PyModel/claude-agy-mcp (historical name)
 
+Release numbering restarted at **0.1.0** for `@pymodel/antigravity-mcp`. Candidate versions below identify the builds originally evaluated.
+
 The repository is now [PyModel/antigravity-mcp](https://github.com/PyModel/antigravity-mcp).
 The baseline paths, branch names, and evidence below retain their original identities.
 

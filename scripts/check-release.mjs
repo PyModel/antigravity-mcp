@@ -22,4 +22,11 @@ for (const [name, version] of Object.entries({
 })) {
   assert.equal(version, pkg.version, `${name} version must match package.json`);
 }
+for (const file of ["README.md", "docs/multi-client-support.md", "assets/banner.svg"]) {
+  const text = readFileSync(new URL(`../${file}`, import.meta.url), "utf8");
+  const marker = file.endsWith(".svg")
+    ? `v${pkg.version}</text>`
+    : "`" + pkg.name + "@" + pkg.version + "`";
+  assert.ok(text.includes(marker), `${file} must display the current release`);
+}
 console.log(`Release metadata agrees on ${pkg.name}@${pkg.version}`);
