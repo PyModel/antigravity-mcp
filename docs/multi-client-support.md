@@ -8,10 +8,7 @@ it is not an official Google MCP server. Pi, OpenCode, Codex, and Claude Code ca
 launch it as a local process. Other hosts need an MCP stdio client or can use the
 bundled CLI relay described in the [README](../README.md#bundled-skills).
 
-The source package is now named `@pymodel/antigravity-mcp`. **That npm name was not
-published at verification time.** Start with the local build below. The
-[package commands](#after-the-renamed-package-is-published) apply only after a
-release under the new name. The GitHub repository has been renamed to
+Install `@pymodel/antigravity-mcp@0.1.0` using the [npm instructions](#npm-installation), or build locally. The GitHub repository has been renamed to
 [PyModel/antigravity-mcp](https://github.com/PyModel/antigravity-mcp). Existing
 checkouts can update their remote using the
 [migration instructions](../README.md#migration-from-claude-agy-mcp).
@@ -276,15 +273,9 @@ verify the new skills, then remove the old copies yourself. `--list` only
 previews and does not write. See the
 [installed-skill migration](../README.md#installed-skills) for the full sequence.
 
-## After the renamed package is published
+## npm installation
 
-**Do not use these commands before `@pymodel/antigravity-mcp` is published.** The
-local build above is the available setup path at the verification date. The
-GitHub repository is already [PyModel/antigravity-mcp](https://github.com/PyModel/antigravity-mcp);
-npm publication is a separate release step, and the old npm package is unaffected
-by the repository rename.
-
-After release, these commands register the canonical npm package. For Pi, Codex,
+These commands register the canonical npm package. For Pi, Codex,
 and OpenCode, keep the timeout settings from their configuration sections;
 registration alone does not add those custom values.
 

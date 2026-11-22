@@ -27,7 +27,7 @@
 
 Choose Gemini 4 Neon or another model in your account's live inventory. The bridge resolves model IDs, preserves conversation sessions, reports usage and partial failures, and returns bounded results. This is an independently maintained integration with Antigravity.
 
-**Package transition:** this source is now `@pymodel/antigravity-mcp`. The new npm name was not published as of November 21, 2026; use the [source build](#build) until release. Existing users should read the [migration notes](#migration-from-claude-agy-mcp). The GitHub repository has been renamed to [PyModel/antigravity-mcp](https://github.com/PyModel/antigravity-mcp).
+**Package:** `@pymodel/antigravity-mcp@0.1.0`. Install from [npm](#npm-installation) or use the [source build](#build). Existing users should read the [migration notes](#migration-from-claude-agy-mcp). The GitHub repository has been renamed to [PyModel/antigravity-mcp](https://github.com/PyModel/antigravity-mcp).
 
 ## Models and plan availability
 
@@ -168,9 +168,9 @@ From that same directory, run the registration command for **one** host:
 
 Configure the host's longer tool timeout before starting a long delegation. The [client guide](docs/multi-client-support.md) includes complete file-based examples, scope choices, absolute executable paths for desktop environments, and connection checks. The examples use the registration name `antigravity`; an existing registration can keep its name when you replace its launch command.
 
-### After the renamed package is published
+### npm installation
 
-The canonical package will be `@pymodel/antigravity-mcp`, with the executable `antigravity-mcp`. **The commands in this subsection require that release; they do not work before publication.**
+The package `@pymodel/antigravity-mcp` provides the `antigravity-mcp` executable.
 
 Use this command as the host's stdio process:
 
@@ -178,9 +178,9 @@ Use this command as the host's stdio process:
 npx -y --package @pymodel/antigravity-mcp antigravity-mcp
 ```
 
-See the [per-client package registration commands](docs/multi-client-support.md#after-the-renamed-package-is-published). Starting the executable directly in a terminal launches a protocol server; it is not an interactive chat command.
+See the [per-client package registration commands](docs/multi-client-support.md#npm-installation). Starting the executable directly in a terminal launches a protocol server; it is not an interactive chat command.
 
-After publication, the separate skill installer can be run with:
+Run the separate skill installer with:
 
 ```bash
 npx --package @pymodel/antigravity-mcp antigravity-mcp-install-skills
@@ -229,16 +229,15 @@ The GitHub repository rename is complete. For an existing checkout whose `origin
 git remote set-url origin https://github.com/PyModel/antigravity-mcp.git
 ```
 
-The repository rename does not publish the new npm package or change the existing `@pymodel/claude-agy-mcp` package. Continue using a source build until the new package is released.
+The repository rename does not publish the new npm package or change the existing `@pymodel/claude-agy-mcp` package.
 
 The new package retains both old executable names as aliases. Those aliases identify executables inside the new package: an existing `npx @pymodel/claude-agy-mcp` command still requests the **old npm package**. Update the configured package or point the host at the source build. The new package and registry metadata are prepared in this source revision; merging a change does not itself publish either registry entry.
 
 Keep the existing MCP registration key if you need stable host tool prefixes, and replace its launch command. Stop the previous server process and reconnect the host. Avoid registering both copies of the same bridge. Tool IDs, `AGY_*` settings, AGY session IDs, and model routing behavior remain compatible.
 
-For a **global npm installation**, remove the old package before installing the new one after publication; both packages export the legacy executable names and otherwise can conflict:
+For a **global npm installation**, remove the old package before installing the new one; both packages export the legacy executable names and otherwise can conflict:
 
 ```bash
-# Run only after the new package is published.
 npm uninstall -g @pymodel/claude-agy-mcp
 npm install -g @pymodel/antigravity-mcp
 ```

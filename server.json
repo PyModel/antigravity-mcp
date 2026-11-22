@@ -6,12 +6,12 @@
     "url": "https://github.com/PyModel/antigravity-mcp",
     "source": "github"
   },
-  "version": "3.2.0",
+  "version": "0.1.0",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "@pymodel/antigravity-mcp",
-      "version": "3.2.0",
+      "version": "0.1.0",
       "transport": {
         "type": "stdio"
       },
